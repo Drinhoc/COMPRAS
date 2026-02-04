@@ -1,0 +1,106 @@
+"""Importação e exportação de Excel."""
+
+from __future__ import annotations
+
+import io
+import unicodedata
+from datetime import date
+from typing import Any
+
+import pandas as pd
+
+from .constants import COLUMN_MAP, COLUMN_ORDER, DISPLAY_NAMES
+
+
+def normalize_header(value: Any) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip().lower()
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = text.replace(" ", "_")
+    text = text.replace("-", "_")
+    return text
+
+
+def parse_decimal(value: Any) -> float | None:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip()
+    if not text:
+        return None
+    text = text.replace(".", "").replace(",", ".") if "," in text else text
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def parse_date(value: Any) -> str | None:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    if isinstance(value, (pd.Timestamp, date)):
+        return value.date().isoformat() if hasattr(value, "date") else value.isoformat()
+    text = str(value).strip()
+    if not text:
+        return None
+    parsed = pd.to_datetime(text, dayfirst=True, errors="coerce")
+    if pd.isna(parsed):
+        return None
+    return parsed.date().isoformat()
+
+
+def normalize_nf(value: Any) -> str | None:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    if isinstance(value, (int, float)):
+        if float(value).is_integer():
+            return str(int(value))
+        return str(value)
+    text = str(value).strip()
+    return text or None
+
+
+def load_excel(file: io.BytesIO, sheet_name: str | None = None) -> pd.DataFrame:
+    df = pd.read_excel(file, sheet_name=sheet_name, header=0)
+    if all(str(col).lower().startswith("unnamed") for col in df.columns):
+        df = pd.read_excel(file, sheet_name=sheet_name, header=1)
+    df = df.dropna(axis=0, how="all").dropna(axis=1, how="all")
+    return df
+
+
+def normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    mapped = {}
+    for col in df.columns:
+        normalized = normalize_header(col)
+        mapped[col] = COLUMN_MAP.get(normalized, normalized)
+    df = df.rename(columns=mapped)
+    df = df[[col for col in df.columns if col in COLUMN_ORDER]]
+
+    for col in COLUMN_ORDER:
+        if col not in df.columns:
+            df[col] = None
+
+    df["data_solicitacao"] = df["data_solicitacao"].apply(parse_date)
+    df["data_compra"] = df["data_compra"].apply(parse_date)
+    df["valor"] = df["valor"].apply(parse_decimal)
+    df["valor_desconto"] = df["valor_desconto"].apply(parse_decimal)
+    df["qtde"] = df["qtde"].apply(lambda x: int(x) if pd.notna(x) and str(x).strip() != "" else None)
+    df["nf"] = df["nf"].apply(normalize_nf)
+
+    return df[COLUMN_ORDER]
+
+
+def dataframe_to_records(df: pd.DataFrame) -> list[dict[str, Any]]:
+    return df.where(pd.notna(df), None).to_dict(orient="records")
+
+
+def export_to_excel(df: pd.DataFrame) -> bytes:
+    df_export = df.copy()
+    df_export = df_export.rename(columns=DISPLAY_NAMES)
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df_export.to_excel(writer, index=False, sheet_name="Requisicoes")
+    return output.getvalue()
