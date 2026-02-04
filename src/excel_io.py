@@ -94,7 +94,9 @@ def normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def dataframe_to_records(df: pd.DataFrame) -> list[dict[str, Any]]:
-    return df.where(pd.notna(df), None).to_dict(orient="records")
+    normalized = df.where(pd.notna(df), None)
+    records = normalized.to_dict(orient="records")
+    return [_normalize_record_values(record) for record in records]
 
 
 def export_to_excel(df: pd.DataFrame) -> bytes:
@@ -119,6 +121,19 @@ def format_date_display(value: Any) -> str | None:
     if pd.isna(parsed):
         return str(value)
     return parsed.strftime("%d/%m/%Y")
+
+
+def _normalize_record_values(record: dict[str, Any]) -> dict[str, Any]:
+    normalized: dict[str, Any] = {}
+    for key, value in record.items():
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            normalized[key] = None
+            continue
+        if isinstance(value, pd.Timestamp):
+            normalized[key] = value.date().isoformat()
+            continue
+        normalized[key] = value
+    return normalized
 
 
 def parse_int(value: Any) -> int | None:
