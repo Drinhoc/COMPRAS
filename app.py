@@ -279,7 +279,7 @@ with aba_importar:
                 st.warning("Importação não remove duplicatas automaticamente.")
                 if total_after < total_before:
                     st.info(
-                        f"{total_before - total_after} linhas foram ignoradas por não terem Item (obrigatório)."
+                        f"{total_before - total_after} linhas foram ignoradas por não terem Item ou Data Solicitação (obrigatórios)."
                     )
             else:
                 st.info("Nenhum registro encontrado para importar.")

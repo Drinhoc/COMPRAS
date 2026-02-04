@@ -160,8 +160,13 @@ def parse_int(value: Any) -> int | None:
 
 
 def filter_required_fields(df: pd.DataFrame) -> pd.DataFrame:
-    if "item" not in df.columns:
+    if "item" not in df.columns and "data_solicitacao" not in df.columns:
         return df
-    item_series = df["item"].astype(str)
-    mask = df["item"].notna() & item_series.str.strip().ne("")
+    item_series = df.get("item").astype(str) if "item" in df.columns else None
+    data_series = df.get("data_solicitacao").astype(str) if "data_solicitacao" in df.columns else None
+    mask = pd.Series([True] * len(df), index=df.index)
+    if item_series is not None:
+        mask &= df["item"].notna() & item_series.str.strip().ne("")
+    if data_series is not None:
+        mask &= df["data_solicitacao"].notna() & data_series.str.strip().ne("")
     return df.loc[mask].copy()
