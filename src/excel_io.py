@@ -92,6 +92,8 @@ def normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     df["qtde"] = df["qtde"].apply(parse_int)
     df["nf"] = df["nf"].apply(normalize_nf)
 
+    df = filter_required_fields(df)
+
     return df[COLUMN_ORDER]
 
 
@@ -155,3 +157,11 @@ def parse_int(value: Any) -> int | None:
         return int(float(text.replace(",", ".")))
     except ValueError:
         return None
+
+
+def filter_required_fields(df: pd.DataFrame) -> pd.DataFrame:
+    if "item" not in df.columns:
+        return df
+    item_series = df["item"].astype(str)
+    mask = df["item"].notna() & item_series.str.strip().ne("")
+    return df.loc[mask].copy()

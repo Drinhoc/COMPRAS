@@ -266,7 +266,9 @@ with aba_importar:
 
         if st.button("Importar"):
             df_raw = excel_io.load_excel(io.BytesIO(file_bytes), sheet_name=sheet_name)
+            total_before = len(df_raw)
             df_norm = excel_io.normalize_dataframe(df_raw)
+            total_after = len(df_norm)
             registros = excel_io.dataframe_to_records(df_norm)
             quantidade = len(registros)
             if quantidade:
@@ -275,5 +277,9 @@ with aba_importar:
                 insert_many(registros)
                 st.success(f"{quantidade} registros importados.")
                 st.warning("Importação não remove duplicatas automaticamente.")
+                if total_after < total_before:
+                    st.info(
+                        f"{total_before - total_after} linhas foram ignoradas por não terem Item (obrigatório)."
+                    )
             else:
                 st.info("Nenhum registro encontrado para importar.")
