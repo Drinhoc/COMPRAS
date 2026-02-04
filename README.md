@@ -219,6 +219,7 @@ Mas para uso simples no trabalho, basta rodar o comando localmente e abrir o nav
 2. No Railway, crie um novo serviço **Web** a partir do GitHub.
 3. Aponte para este repositório e confirme o deploy.
 4. O Railway usa o `Procfile` para iniciar o app.
+5. O Python está fixado em **3.12.3** via `.python-version` (evita erro de build com pandas).
 
 ### ✅ 3) Configure as variáveis de ambiente
 No serviço **Web** do Railway, adicione:
