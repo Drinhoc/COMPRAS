@@ -8,7 +8,7 @@ Aplicação Streamlit simples para substituir planilhas de requisições de comp
 - CRUD completo (criar, editar, visualizar, filtrar).
 - Métricas (total gasto, total por empresa e por fornecedor).
 - Exportação para Excel com filtros aplicados.
-- Banco SQLite local em `/data/app.db`.
+- Banco local por padrão (SQLite) e **Postgres via Railway** quando `DATABASE_URL` estiver configurado.
 
 ## 📁 Estrutura do projeto
 ```
@@ -204,3 +204,38 @@ Se quiser abrir o app de qualquer lugar sem rodar localmente, aí sim seria nece
 - manter sua máquina ligada e expor a porta.
 
 Mas para uso simples no trabalho, basta rodar o comando localmente e abrir o navegador.
+
+---
+
+## 🚀 Deploy gratuito no Railway (Postgres + Streamlit Cloud)
+
+### ✅ 1) Crie o banco Postgres no Railway
+1. Acesse https://railway.app e crie uma conta.
+2. Crie um novo projeto e adicione um **PostgreSQL**.
+3. Copie a variável **DATABASE_URL** fornecida pelo Railway.
+
+### ✅ 2) Configure o app para usar o Postgres
+O app já aceita Postgres via variável de ambiente:
+- **Local (Linux/Mac)**:
+  ```bash
+  export DATABASE_URL="sua_url_do_railway"
+  streamlit run app.py
+  ```
+- **Windows (PowerShell)**:
+  ```powershell
+  $env:DATABASE_URL="sua_url_do_railway"
+  streamlit run app.py
+  ```
+
+### ✅ 3) Suba o app no Streamlit Cloud (gratuito)
+1. Suba este repositório para o GitHub.
+2. Acesse https://share.streamlit.io
+3. Conecte o repositório e selecione `app.py`.
+4. Em **Advanced settings**, adicione a variável:
+   - `DATABASE_URL = <sua_url_do_railway>`
+5. Clique em **Deploy**.
+
+### ✅ 4) Acesse pela URL pública
+- O Streamlit Cloud gera uma URL pública para seu app.
+- Ele pode ficar em sleep quando não usado, e acorda ao acessar.
+- **Os dados ficam no Railway (persistentes)**.

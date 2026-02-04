@@ -1,61 +1,68 @@
-"""Camada de banco de dados SQLite."""
+"""Camada de banco de dados (SQLite local ou Postgres em produção)."""
 
 from __future__ import annotations
 
 import os
-import sqlite3
 from typing import Iterable
+
+from sqlalchemy import Column, Float, Integer, MetaData, String, Table, create_engine, text
 
 from .constants import COLUMN_ORDER
 
 DB_PATH = "/data/app.db"
+DEFAULT_SQLITE_URL = f"sqlite:///{DB_PATH}"
+
+metadata = MetaData()
+
+requisicoes = Table(
+    "requisicoes",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("empresa", String, nullable=False),
+    Column("setor", String),
+    Column("requisicao", String),
+    Column("data_solicitacao", String, nullable=False),
+    Column("data_compra", String),
+    Column("fornecedor", String),
+    Column("qtde", Integer),
+    Column("item", String, nullable=False),
+    Column("entrega", String),
+    Column("situacao", String),
+    Column("valor", Float),
+    Column("valor_desconto", Float),
+    Column("nf", String),
+    Column("observacao", String),
+)
 
 
-def ensure_db_dir() -> None:
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+def _normalize_database_url(url: str) -> str:
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+psycopg2://", 1)
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+psycopg2://", 1)
+    return url
 
 
-def get_connection() -> sqlite3.Connection:
-    ensure_db_dir()
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+def get_engine():
+    database_url = os.getenv("DATABASE_URL", DEFAULT_SQLITE_URL)
+    database_url = _normalize_database_url(database_url)
+    if database_url.startswith("sqlite"):
+        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+        return create_engine(database_url, connect_args={"check_same_thread": False})
+    return create_engine(database_url)
+
+
+ENGINE = get_engine()
 
 
 def init_db() -> None:
-    ensure_db_dir()
-    with get_connection() as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS requisicoes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                empresa TEXT NOT NULL,
-                setor TEXT,
-                requisicao TEXT,
-                data_solicitacao TEXT NOT NULL,
-                data_compra TEXT,
-                fornecedor TEXT,
-                qtde INTEGER,
-                item TEXT NOT NULL,
-                entrega TEXT,
-                situacao TEXT,
-                valor REAL,
-                valor_desconto REAL,
-                nf TEXT,
-                observacao TEXT
-            )
-            """
-        )
-        conn.commit()
+    metadata.create_all(ENGINE)
 
 
 def insert_many(rows: Iterable[dict]) -> int:
     columns = ", ".join(COLUMN_ORDER)
     placeholders = ", ".join([":" + col for col in COLUMN_ORDER])
-    with get_connection() as conn:
-        cursor = conn.executemany(
-            f"INSERT INTO requisicoes ({columns}) VALUES ({placeholders})",
-            rows,
-        )
-        conn.commit()
-        return cursor.rowcount
+    query = text(f"INSERT INTO requisicoes ({columns}) VALUES ({placeholders})")
+    with ENGINE.begin() as conn:
+        result = conn.execute(query, list(rows))
+        return result.rowcount

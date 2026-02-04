@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import pandas as pd
+from sqlalchemy import text
 
 from .crud import build_filters
-from .db import get_connection
+from .db import ENGINE
 
 
 def fetch_dataframe(filters: dict) -> pd.DataFrame:
     where_clause, params = build_filters(filters)
-    query = f"SELECT * FROM requisicoes{where_clause}"
-    with get_connection() as conn:
+    query = text(f"SELECT * FROM requisicoes{where_clause}")
+    with ENGINE.connect() as conn:
         df = pd.read_sql_query(query, conn, params=params)
     return df
 

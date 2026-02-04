@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from sqlalchemy import text
+
 from .constants import COLUMN_ORDER
-from .db import get_connection
+from .db import ENGINE
 
 
 def build_filters(filters: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -49,48 +51,48 @@ def fetch_requisicoes(filters: dict[str, Any], limit: int, offset: int) -> list[
     where_clause, params = build_filters(filters)
     query = f"SELECT * FROM requisicoes{where_clause} ORDER BY id DESC LIMIT :limit OFFSET :offset"
     params.update({"limit": limit, "offset": offset})
-    with get_connection() as conn:
-        cursor = conn.execute(query, params)
-        return [dict(row) for row in cursor.fetchall()]
+    with ENGINE.connect() as conn:
+        cursor = conn.execute(text(query), params)
+        return [dict(row._mapping) for row in cursor.fetchall()]
 
 
 def count_requisicoes(filters: dict[str, Any]) -> int:
     where_clause, params = build_filters(filters)
     query = f"SELECT COUNT(*) as total FROM requisicoes{where_clause}"
-    with get_connection() as conn:
-        cursor = conn.execute(query, params)
-        return cursor.fetchone()["total"]
+    with ENGINE.connect() as conn:
+        cursor = conn.execute(text(query), params)
+        row = cursor.fetchone()
+        return row[0] if row else 0
 
 
 def fetch_distinct(field: str) -> list[str]:
-    with get_connection() as conn:
-        cursor = conn.execute(
-            f"SELECT DISTINCT {field} FROM requisicoes WHERE {field} IS NOT NULL AND {field} != '' ORDER BY {field}"
-        )
+    query = (
+        f"SELECT DISTINCT {field} FROM requisicoes WHERE {field} IS NOT NULL AND {field} != '' ORDER BY {field}"
+    )
+    with ENGINE.connect() as conn:
+        cursor = conn.execute(text(query))
         return [row[0] for row in cursor.fetchall()]
 
 
 def get_by_id(requisicao_id: int) -> dict[str, Any] | None:
-    with get_connection() as conn:
-        cursor = conn.execute("SELECT * FROM requisicoes WHERE id = ?", (requisicao_id,))
+    with ENGINE.connect() as conn:
+        cursor = conn.execute(text("SELECT * FROM requisicoes WHERE id = :id"), {"id": requisicao_id})
         row = cursor.fetchone()
-        return dict(row) if row else None
+        return dict(row._mapping) if row else None
 
 
 def update_requisicao(requisicao_id: int, data: dict[str, Any]) -> None:
     assignments = ", ".join([f"{col} = :{col}" for col in COLUMN_ORDER])
     data["id"] = requisicao_id
-    with get_connection() as conn:
-        conn.execute(f"UPDATE requisicoes SET {assignments} WHERE id = :id", data)
-        conn.commit()
+    with ENGINE.begin() as conn:
+        conn.execute(text(f"UPDATE requisicoes SET {assignments} WHERE id = :id"), data)
 
 
 def create_requisicao(data: dict[str, Any]) -> None:
     columns = ", ".join(COLUMN_ORDER)
     placeholders = ", ".join([":" + col for col in COLUMN_ORDER])
-    with get_connection() as conn:
+    with ENGINE.begin() as conn:
         conn.execute(
-            f"INSERT INTO requisicoes ({columns}) VALUES ({placeholders})",
+            text(f"INSERT INTO requisicoes ({columns}) VALUES ({placeholders})"),
             data,
         )
-        conn.commit()
