@@ -207,35 +207,23 @@ Mas para uso simples no trabalho, basta rodar o comando localmente e abrir o nav
 
 ---
 
-## 🚀 Deploy gratuito no Railway (Postgres + Streamlit Cloud)
+## 🚀 Deploy direto no Railway (app + Postgres)
 
 ### ✅ 1) Crie o banco Postgres no Railway
 1. Acesse https://railway.app e crie uma conta.
 2. Crie um novo projeto e adicione um **PostgreSQL**.
 3. Copie a variável **DATABASE_URL** fornecida pelo Railway.
 
-### ✅ 2) Configure o app para usar o Postgres
-O app já aceita Postgres via variável de ambiente:
-- **Local (Linux/Mac)**:
-  ```bash
-  export DATABASE_URL="sua_url_do_railway"
-  streamlit run app.py
-  ```
-- **Windows (PowerShell)**:
-  ```powershell
-  $env:DATABASE_URL="sua_url_do_railway"
-  streamlit run app.py
-  ```
-
-### ✅ 3) Suba o app no Streamlit Cloud (gratuito)
+### ✅ 2) Suba o app no Railway (usando o GitHub)
 1. Suba este repositório para o GitHub.
-2. Acesse https://share.streamlit.io
-3. Conecte o repositório e selecione `app.py`.
-4. Em **Advanced settings**, adicione a variável:
-   - `DATABASE_URL = <sua_url_do_railway>`
-5. Clique em **Deploy**.
+2. No Railway, crie um novo serviço **Web** a partir do GitHub.
+3. Aponte para este repositório e confirme o deploy.
+4. O Railway usa o `Procfile` para iniciar o app.
+
+### ✅ 3) Configure as variáveis de ambiente
+No serviço **Web** do Railway, adicione:
+- `DATABASE_URL` (use a URL do Postgres criado no passo 1)
 
 ### ✅ 4) Acesse pela URL pública
-- O Streamlit Cloud gera uma URL pública para seu app.
-- Ele pode ficar em sleep quando não usado, e acorda ao acessar.
-- **Os dados ficam no Railway (persistentes)**.
+- O Railway gera uma URL pública para seu app (no serviço Web).
+- O app e o banco ficam no **mesmo provedor** e os dados são persistentes.
