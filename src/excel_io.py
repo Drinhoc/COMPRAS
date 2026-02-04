@@ -126,7 +126,7 @@ def format_date_display(value: Any) -> str | None:
 def _normalize_record_values(record: dict[str, Any]) -> dict[str, Any]:
     normalized: dict[str, Any] = {}
     for key, value in record.items():
-        if value is None or (isinstance(value, float) and pd.isna(value)):
+        if value is None or pd.isna(value):
             normalized[key] = None
             continue
         if isinstance(value, pd.Timestamp):
