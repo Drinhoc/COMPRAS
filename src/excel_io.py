@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import io
 import unicodedata
-from datetime import date
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from .constants import COLUMN_MAP, COLUMN_ORDER, DISPLAY_NAMES
@@ -129,8 +131,15 @@ def _normalize_record_values(record: dict[str, Any]) -> dict[str, Any]:
         if value is None or pd.isna(value):
             normalized[key] = None
             continue
-        if isinstance(value, pd.Timestamp):
-            normalized[key] = value.date().isoformat()
+        if isinstance(value, (pd.Timestamp, np.datetime64, datetime, date)):
+            parsed = pd.to_datetime(value, dayfirst=True, errors="coerce")
+            normalized[key] = None if pd.isna(parsed) else parsed.date().isoformat()
+            continue
+        if isinstance(value, Decimal):
+            normalized[key] = float(value)
+            continue
+        if isinstance(value, np.generic):
+            normalized[key] = value.item()
             continue
         normalized[key] = value
     return normalized
