@@ -99,8 +99,23 @@ def dataframe_to_records(df: pd.DataFrame) -> list[dict[str, Any]]:
 
 def export_to_excel(df: pd.DataFrame) -> bytes:
     df_export = df.copy()
+    for col in ["data_solicitacao", "data_compra"]:
+        if col in df_export.columns:
+            df_export[col] = df_export[col].apply(format_date_display)
     df_export = df_export.rename(columns=DISPLAY_NAMES)
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df_export.to_excel(writer, index=False, sheet_name="Requisicoes")
     return output.getvalue()
+
+
+def format_date_display(value: Any) -> str | None:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    try:
+        parsed = pd.to_datetime(value, dayfirst=True, errors="coerce")
+    except (TypeError, ValueError):
+        return str(value)
+    if pd.isna(parsed):
+        return str(value)
+    return parsed.strftime("%d/%m/%Y")

@@ -203,6 +203,9 @@ with aba_requisicoes:
     registros = crud.fetch_requisicoes(filters, limit=page_size, offset=offset)
     df_view = pd.DataFrame(registros)
     if not df_view.empty:
+        for col in ["data_solicitacao", "data_compra"]:
+            if col in df_view.columns:
+                df_view[col] = df_view[col].apply(excel_io.format_date_display)
         df_view = df_view.rename(columns=DISPLAY_NAMES)
     st.dataframe(df_view, use_container_width=True)
 
