@@ -87,7 +87,7 @@ def normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     df["data_compra"] = df["data_compra"].apply(parse_date)
     df["valor"] = df["valor"].apply(parse_decimal)
     df["valor_desconto"] = df["valor_desconto"].apply(parse_decimal)
-    df["qtde"] = df["qtde"].apply(lambda x: int(x) if pd.notna(x) and str(x).strip() != "" else None)
+    df["qtde"] = df["qtde"].apply(parse_int)
     df["nf"] = df["nf"].apply(normalize_nf)
 
     return df[COLUMN_ORDER]
@@ -119,3 +119,15 @@ def format_date_display(value: Any) -> str | None:
     if pd.isna(parsed):
         return str(value)
     return parsed.strftime("%d/%m/%Y")
+
+
+def parse_int(value: Any) -> int | None:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return int(float(text.replace(",", ".")))
+    except ValueError:
+        return None
