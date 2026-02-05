@@ -251,6 +251,10 @@ with aba_requisicoes:
                 "observacao": st.column_config.TextColumn("Observação"),
             },
         )
+        st.dataframe(
+            editor_df.rename(columns=DISPLAY_NAMES).style.apply(highlight_status, axis=1),
+            use_container_width=True,
+        )
         if st.button("Salvar alterações"):
             changes = 0
             for _, row in edited.iterrows():
