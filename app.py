@@ -160,6 +160,17 @@ def validate_payload(payload: dict) -> list[str]:
     return errors
 
 
+def highlight_status(row: pd.Series) -> list[str]:
+    status = str(row.get("Situação", "")).strip().upper()
+    if status in {"CONCLUÍDO", "ENTREGUE"}:
+        color = "#D1F7C4"
+    elif status in {"COMPRADO"}:
+        color = "#FFF3BF"
+    else:
+        color = "#FFD6D6"
+    return [f"background-color: {color}"] * len(row)
+
+
 st.title("Sistema de Controle de Requisições")
 
 aba_dashboard, aba_requisicoes, aba_importar = st.tabs([
@@ -254,7 +265,10 @@ with aba_requisicoes:
             if col in df_view.columns:
                 df_view[col] = df_view[col].apply(excel_io.format_date_display)
         df_view = df_view.rename(columns=DISPLAY_NAMES)
-        st.dataframe(df_view, use_container_width=True)
+        st.dataframe(
+            df_view.style.apply(highlight_status, axis=1),
+            use_container_width=True,
+        )
     else:
         st.info("Nenhum registro encontrado com os filtros atuais.")
 
