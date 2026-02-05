@@ -170,15 +170,13 @@ def validate_payload(payload: dict) -> list[str]:
     return errors
 
 
-def highlight_status(row: pd.Series) -> list[str]:
-    status = str(row.get("Situação", "")).strip().upper()
+def status_badge(status_value: object) -> str:
+    status = str(status_value or "").strip().upper()
     if status in {"CONCLUÍDO", "ENTREGUE"}:
-        color = "#D1F7C4"
-    elif status in {"COMPRADO"}:
-        color = "#FFF3BF"
-    else:
-        color = "#FFD6D6"
-    return [f"background-color: {color}"] * len(row)
+        return "🟢 Concluído"
+    if status == "COMPRADO":
+        return "🟡 Em compra"
+    return "🔴 Sem status"
 
 
 st.title("Sistema de Controle de Requisições")
@@ -231,6 +229,13 @@ with aba_requisicoes:
         for col in ["data_solicitacao", "data_compra"]:
             if col in editor_df.columns:
                 editor_df[col] = pd.to_datetime(editor_df[col], errors="coerce").dt.date
+        status_values = editor_df.get("situacao")
+        if status_values is not None:
+            status_col = status_values.apply(status_badge)
+            if "situacao" in editor_df.columns:
+                editor_df.insert(editor_df.columns.get_loc("situacao") + 1, "status_cor", status_col)
+            else:
+                editor_df["status_cor"] = status_col
         edited = st.data_editor(
             editor_df,
             key="editor_requisicoes",
@@ -247,15 +252,12 @@ with aba_requisicoes:
                 "item": st.column_config.TextColumn("Item"),
                 "entrega": st.column_config.TextColumn("Entrega"),
                 "situacao": st.column_config.SelectboxColumn("Situação", options=STATUS_LIST),
+                "status_cor": st.column_config.TextColumn("Status", disabled=True),
                 "valor": st.column_config.NumberColumn("Valor", step=0.01),
                 "valor_desconto": st.column_config.NumberColumn("Valor Desconto", step=0.01),
                 "nf": st.column_config.TextColumn("NF"),
                 "observacao": st.column_config.TextColumn("Observação"),
             },
-        )
-        st.dataframe(
-            editor_df.rename(columns=DISPLAY_NAMES).style.apply(highlight_status, axis=1),
-            use_container_width=True,
         )
         if st.button("Salvar alterações"):
             changes = 0
