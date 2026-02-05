@@ -224,44 +224,54 @@ with aba_requisicoes:
     registros = crud.fetch_requisicoes(filters, limit=page_size, offset=offset)
     df_edit = pd.DataFrame(registros)
     if not df_edit.empty:
-        st.markdown("### Edição rápida (campos principais)")
-        editable_cols = [
-            "item",
-            "qtde",
-            "situacao",
-            "valor",
-            "valor_desconto",
-            "fornecedor",
-            "entrega",
-        ]
-        editor_df = df_edit[["id"] + editable_cols].copy()
+        st.markdown("### Edição na própria tabela")
+        editor_df = df_edit.copy()
         edited = st.data_editor(
             editor_df,
             key="editor_requisicoes",
             use_container_width=True,
             column_config={
                 "id": st.column_config.NumberColumn("ID", disabled=True),
+                "empresa": st.column_config.TextColumn("Empresa"),
+                "setor": st.column_config.TextColumn("Setor"),
+                "requisicao": st.column_config.TextColumn("Requisição"),
+                "data_solicitacao": st.column_config.DateColumn("Data Solicitação"),
+                "data_compra": st.column_config.DateColumn("Data Compra"),
+                "fornecedor": st.column_config.TextColumn("Fornecedor"),
                 "qtde": st.column_config.NumberColumn("Qtde", min_value=0, step=1),
+                "item": st.column_config.TextColumn("Item"),
+                "entrega": st.column_config.TextColumn("Entrega"),
                 "situacao": st.column_config.SelectboxColumn("Situação", options=STATUS_LIST),
                 "valor": st.column_config.NumberColumn("Valor", step=0.01),
                 "valor_desconto": st.column_config.NumberColumn("Valor Desconto", step=0.01),
+                "nf": st.column_config.TextColumn("NF"),
+                "observacao": st.column_config.TextColumn("Observação"),
             },
         )
-        if st.button("Salvar alterações rápidas"):
+        if st.button("Salvar alterações"):
             changes = 0
             for _, row in edited.iterrows():
                 original = df_edit.loc[df_edit["id"] == row["id"]].iloc[0]
-                payload = {
-                    **{col: original.get(col) for col in COLUMN_ORDER},
-                    "item": str(row["item"]).strip() if pd.notna(row["item"]) else "",
-                    "qtde": excel_io.parse_int(row["qtde"]),
-                    "situacao": str(row["situacao"]).strip() if pd.notna(row["situacao"]) else "",
-                    "valor": excel_io.parse_decimal(row["valor"]),
-                    "valor_desconto": excel_io.parse_decimal(row["valor_desconto"]),
-                    "fornecedor": str(row["fornecedor"]).strip() if pd.notna(row["fornecedor"]) else "",
-                    "entrega": str(row["entrega"]).strip() if pd.notna(row["entrega"]) else "",
-                }
-                if any(payload[col] != original.get(col) for col in editable_cols):
+                payload = {col: original.get(col) for col in COLUMN_ORDER}
+                payload.update(
+                    {
+                        "empresa": excel_io.normalize_text(row.get("empresa")),
+                        "setor": excel_io.normalize_text(row.get("setor")),
+                        "requisicao": str(row.get("requisicao") or "").strip(),
+                        "data_solicitacao": excel_io.parse_date(row.get("data_solicitacao")),
+                        "data_compra": excel_io.parse_date(row.get("data_compra")),
+                        "fornecedor": excel_io.normalize_text(row.get("fornecedor")),
+                        "qtde": excel_io.parse_int(row.get("qtde")),
+                        "item": str(row.get("item") or "").strip(),
+                        "entrega": str(row.get("entrega") or "").strip(),
+                        "situacao": excel_io.normalize_text(row.get("situacao")),
+                        "valor": excel_io.parse_decimal(row.get("valor")),
+                        "valor_desconto": excel_io.parse_decimal(row.get("valor_desconto")),
+                        "nf": str(row.get("nf") or "").strip() or None,
+                        "observacao": str(row.get("observacao") or "").strip(),
+                    }
+                )
+                if any(payload[col] != original.get(col) for col in COLUMN_ORDER):
                     crud.update_requisicao(int(row["id"]), payload)
                     changes += 1
             if changes:
@@ -269,16 +279,6 @@ with aba_requisicoes:
                 st.experimental_rerun()
             else:
                 st.info("Nenhuma alteração para salvar.")
-
-        df_view = df_edit.copy()
-        for col in ["data_solicitacao", "data_compra"]:
-            if col in df_view.columns:
-                df_view[col] = df_view[col].apply(excel_io.format_date_display)
-        df_view = df_view.rename(columns=DISPLAY_NAMES)
-        st.dataframe(
-            df_view.style.apply(highlight_status, axis=1),
-            use_container_width=True,
-        )
     else:
         st.info("Nenhum registro encontrado com os filtros atuais.")
 
