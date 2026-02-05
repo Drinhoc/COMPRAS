@@ -224,6 +224,7 @@ Mas para uso simples no trabalho, basta rodar o comando localmente e abrir o nav
 ### ✅ 3) Configure as variáveis de ambiente
 No serviço **Web** do Railway, adicione:
 - `DATABASE_URL` (use a URL do Postgres criado no passo 1)
+> Dica: se o app abrir sem erro de banco, significa que o `DATABASE_URL` está sendo usado corretamente.
 
 ### ✅ 4) Acesse pela URL pública
 - O Railway gera uma URL pública para seu app (no serviço Web).
