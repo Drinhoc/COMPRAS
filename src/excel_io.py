@@ -86,6 +86,9 @@ def normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
             df[col] = None
 
     df["empresa"] = df["empresa"].apply(normalize_text)
+    df["setor"] = df["setor"].apply(normalize_text)
+    df["fornecedor"] = df["fornecedor"].apply(normalize_text)
+    df["situacao"] = df["situacao"].apply(normalize_text)
     df["data_solicitacao"] = df["data_solicitacao"].apply(parse_date)
     df["data_compra"] = df["data_compra"].apply(parse_date)
     df["valor"] = df["valor"].apply(parse_decimal)

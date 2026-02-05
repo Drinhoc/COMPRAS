@@ -10,21 +10,25 @@ from .constants import COLUMN_ORDER
 from .db import ENGINE
 
 
+def normalize_filter_value(value: str) -> str:
+    return value.strip().upper()
+
+
 def build_filters(filters: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     clauses: list[str] = []
     params: dict[str, Any] = {}
 
-    def add_in(field: str, values: list[str] | None) -> None:
+    def add_in(field_expr: str, values: list[str] | None, param_prefix: str) -> None:
         if values:
-            placeholders = ", ".join([f":{field}_{i}" for i in range(len(values))])
-            clauses.append(f"{field} IN ({placeholders})")
+            placeholders = ", ".join([f":{param_prefix}_{i}" for i in range(len(values))])
+            clauses.append(f"{field_expr} IN ({placeholders})")
             for i, val in enumerate(values):
-                params[f"{field}_{i}"] = val
+                params[f"{param_prefix}_{i}"] = normalize_filter_value(val)
 
-    add_in("empresa", filters.get("empresa"))
-    add_in("setor", filters.get("setor"))
-    add_in("fornecedor", filters.get("fornecedor"))
-    add_in("situacao", filters.get("situacao"))
+    add_in("UPPER(TRIM(empresa))", filters.get("empresa"), "empresa")
+    add_in("UPPER(TRIM(setor))", filters.get("setor"), "setor")
+    add_in("UPPER(TRIM(fornecedor))", filters.get("fornecedor"), "fornecedor")
+    add_in("UPPER(TRIM(situacao))", filters.get("situacao"), "situacao")
 
     data_sol = filters.get("data_solicitacao")
     if data_sol:
@@ -39,9 +43,12 @@ def build_filters(filters: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     texto = filters.get("texto")
     if texto:
         clauses.append(
-            "(item LIKE :texto OR observacao LIKE :texto OR requisicao LIKE :texto OR fornecedor LIKE :texto)"
+            "("
+            "LOWER(item) LIKE :texto OR LOWER(observacao) LIKE :texto "
+            "OR LOWER(requisicao) LIKE :texto OR LOWER(fornecedor) LIKE :texto"
+            ")"
         )
-        params["texto"] = f"%{texto}%"
+        params["texto"] = f"%{texto.lower()}%"
 
     where_clause = " WHERE " + " AND ".join(clauses) if clauses else ""
     return where_clause, params
@@ -67,10 +74,13 @@ def count_requisicoes(filters: dict[str, Any]) -> int:
 
 def fetch_distinct(field: str) -> list[str]:
     query = (
-        f"SELECT DISTINCT {field} FROM requisicoes WHERE {field} IS NOT NULL AND {field} != '' ORDER BY {field}"
+        "SELECT DISTINCT UPPER(TRIM({field})) as value "
+        "FROM requisicoes "
+        "WHERE {field} IS NOT NULL AND TRIM({field}) != '' "
+        "ORDER BY value"
     )
     with ENGINE.connect() as conn:
-        cursor = conn.execute(text(query))
+        cursor = conn.execute(text(query.format(field=field)))
         return [row[0] for row in cursor.fetchall()]
 
 
