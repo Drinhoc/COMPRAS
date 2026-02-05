@@ -7,6 +7,7 @@ from sqlalchemy import text
 
 from .crud import build_filters
 from .db import ENGINE
+from .excel_io import normalize_text
 
 
 def fetch_dataframe(filters: dict) -> pd.DataFrame:
@@ -29,6 +30,7 @@ def total_por_empresa(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame(columns=["empresa", "total"])
     df = df.copy()
+    df["empresa"] = df["empresa"].apply(normalize_text)
     df["total"] = df["valor"].fillna(0) - df["valor_desconto"].fillna(0)
     return df.groupby("empresa", dropna=False)["total"].sum().reset_index()
 

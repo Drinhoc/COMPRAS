@@ -85,6 +85,7 @@ def normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         if col not in df.columns:
             df[col] = None
 
+    df["empresa"] = df["empresa"].apply(normalize_text)
     df["data_solicitacao"] = df["data_solicitacao"].apply(parse_date)
     df["data_compra"] = df["data_compra"].apply(parse_date)
     df["valor"] = df["valor"].apply(parse_decimal)
@@ -157,6 +158,13 @@ def parse_int(value: Any) -> int | None:
         return int(float(text.replace(",", ".")))
     except ValueError:
         return None
+
+
+def normalize_text(value: Any) -> str | None:
+    if value is None or pd.isna(value):
+        return None
+    text = str(value).strip()
+    return text.upper() if text else None
 
 
 def filter_required_fields(df: pd.DataFrame) -> pd.DataFrame:
