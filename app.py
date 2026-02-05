@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import os
 from datetime import date
 
 import pandas as pd
@@ -11,10 +12,19 @@ import streamlit as st
 from src import crud, excel_io, metrics
 from src.auth import require_pin
 from src.constants import COLUMN_ORDER, DISPLAY_NAMES, STATUS_LIST
-from src.db import init_db
+from src.db import get_database_url, init_db, is_sqlite_url
 
 
 st.set_page_config(page_title="Controle de Compras", layout="wide")
+database_url = get_database_url()
+if is_sqlite_url(database_url):
+    st.warning(
+        "Banco atual: SQLite local. Em deploy (Railway) isso pode resetar a cada reinício. "
+        "Configure a variável DATABASE_URL do Postgres do Railway para persistência."
+    )
+    if os.getenv("RAILWAY_ENVIRONMENT"):
+        st.error("DATABASE_URL não configurada no Railway. O banco não é persistente.")
+        st.stop()
 init_db()
 
 if not require_pin():

@@ -43,9 +43,16 @@ def _normalize_database_url(url: str) -> str:
     return url
 
 
+def get_database_url() -> str:
+    return _normalize_database_url(os.getenv("DATABASE_URL", DEFAULT_SQLITE_URL))
+
+
+def is_sqlite_url(url: str) -> bool:
+    return url.startswith("sqlite")
+
+
 def get_engine():
-    database_url = os.getenv("DATABASE_URL", DEFAULT_SQLITE_URL)
-    database_url = _normalize_database_url(database_url)
+    database_url = get_database_url()
     if database_url.startswith("sqlite"):
         os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
         return create_engine(database_url, connect_args={"check_same_thread": False})
