@@ -201,31 +201,60 @@ with aba_requisicoes:
     offset = (pagina - 1) * page_size
 
     registros = crud.fetch_requisicoes(filters, limit=page_size, offset=offset)
-    df_view = pd.DataFrame(registros)
-    if not df_view.empty:
+    df_edit = pd.DataFrame(registros)
+    if not df_edit.empty:
+        st.markdown("### Edição rápida (campos principais)")
+        editable_cols = [
+            "item",
+            "qtde",
+            "situacao",
+            "valor",
+            "valor_desconto",
+            "fornecedor",
+            "entrega",
+        ]
+        editor_df = df_edit[["id"] + editable_cols].copy()
+        edited = st.data_editor(
+            editor_df,
+            key="editor_requisicoes",
+            use_container_width=True,
+            column_config={
+                "id": st.column_config.NumberColumn("ID", disabled=True),
+                "qtde": st.column_config.NumberColumn("Qtde", min_value=0, step=1),
+                "situacao": st.column_config.SelectboxColumn("Situação", options=STATUS_LIST),
+                "valor": st.column_config.NumberColumn("Valor", step=0.01),
+                "valor_desconto": st.column_config.NumberColumn("Valor Desconto", step=0.01),
+            },
+        )
+        if st.button("Salvar alterações rápidas"):
+            changes = 0
+            for _, row in edited.iterrows():
+                original = df_edit.loc[df_edit["id"] == row["id"]].iloc[0]
+                payload = {
+                    **{col: original.get(col) for col in COLUMN_ORDER},
+                    "item": str(row["item"]).strip() if pd.notna(row["item"]) else "",
+                    "qtde": excel_io.parse_int(row["qtde"]),
+                    "situacao": str(row["situacao"]).strip() if pd.notna(row["situacao"]) else "",
+                    "valor": excel_io.parse_decimal(row["valor"]),
+                    "valor_desconto": excel_io.parse_decimal(row["valor_desconto"]),
+                    "fornecedor": str(row["fornecedor"]).strip() if pd.notna(row["fornecedor"]) else "",
+                    "entrega": str(row["entrega"]).strip() if pd.notna(row["entrega"]) else "",
+                }
+                if any(payload[col] != original.get(col) for col in editable_cols):
+                    crud.update_requisicao(int(row["id"]), payload)
+                    changes += 1
+            if changes:
+                st.success(f"{changes} requisições atualizadas.")
+                st.experimental_rerun()
+            else:
+                st.info("Nenhuma alteração para salvar.")
+
+        df_view = df_edit.copy()
         for col in ["data_solicitacao", "data_compra"]:
             if col in df_view.columns:
                 df_view[col] = df_view[col].apply(excel_io.format_date_display)
         df_view = df_view.rename(columns=DISPLAY_NAMES)
-    st.dataframe(df_view, use_container_width=True)
-
-    st.markdown("### Editar requisição")
-    if registros:
-        selected_id = st.selectbox("Selecione o ID", [row["id"] for row in registros])
-        selecionado = crud.get_by_id(selected_id)
-        if selecionado:
-            with st.form("editar_form"):
-                payload = render_requisicao_form("edit", selecionado)
-                submitted = st.form_submit_button("Salvar alterações")
-                if submitted:
-                    errors = validate_payload(payload)
-                    if errors:
-                        for err in errors:
-                            st.error(err)
-                    else:
-                        crud.update_requisicao(selected_id, payload)
-                        st.success("Requisição atualizada.")
-                        st.experimental_rerun()
+        st.dataframe(df_view, use_container_width=True)
     else:
         st.info("Nenhum registro encontrado com os filtros atuais.")
 
@@ -256,13 +285,22 @@ with aba_requisicoes:
 
 with aba_importar:
     st.subheader("Importar Excel")
-    upload = st.file_uploader("Selecione o arquivo .xlsx", type=["xlsx"])
-    if upload:
-        file_bytes = upload.getvalue()
+    upload = st.file_uploader("Selecione o arquivo .xlsx", type=["xlsx"], key="upload_excel")
+    if upload is not None:
+        st.session_state.import_file_bytes = upload.getvalue()
+        st.session_state.import_file_name = upload.name
+    file_bytes = st.session_state.get("import_file_bytes")
+    if file_bytes:
         excel_file = pd.ExcelFile(io.BytesIO(file_bytes))
         sheets = excel_file.sheet_names
         sheet = st.selectbox("Selecione a planilha", ["(Primeira)"] + sheets)
         sheet_name = None if sheet == "(Primeira)" else sheet
+
+        st.caption(f"Arquivo atual: {st.session_state.get('import_file_name', 'upload')} ")
+        if st.button("Limpar arquivo carregado"):
+            st.session_state.pop("import_file_bytes", None)
+            st.session_state.pop("import_file_name", None)
+            st.experimental_rerun()
 
         if st.button("Importar"):
             df_raw = excel_io.load_excel(io.BytesIO(file_bytes), sheet_name=sheet_name)
