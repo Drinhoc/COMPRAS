@@ -224,8 +224,11 @@ with aba_requisicoes:
     registros = crud.fetch_requisicoes(filters, limit=page_size, offset=offset)
     df_edit = pd.DataFrame(registros)
     if not df_edit.empty:
-        st.markdown("### Edição na própria tabela")
+        st.markdown("### Tabela de Requisições")
         editor_df = df_edit.copy()
+        for col in ["data_solicitacao", "data_compra"]:
+            if col in editor_df.columns:
+                editor_df[col] = pd.to_datetime(editor_df[col], errors="coerce").dt.date
         edited = st.data_editor(
             editor_df,
             key="editor_requisicoes",
@@ -235,8 +238,8 @@ with aba_requisicoes:
                 "empresa": st.column_config.TextColumn("Empresa"),
                 "setor": st.column_config.TextColumn("Setor"),
                 "requisicao": st.column_config.TextColumn("Requisição"),
-                "data_solicitacao": st.column_config.DateColumn("Data Solicitação"),
-                "data_compra": st.column_config.DateColumn("Data Compra"),
+                "data_solicitacao": st.column_config.DateColumn("Data Solicitação", format="DD/MM/YYYY"),
+                "data_compra": st.column_config.DateColumn("Data Compra", format="DD/MM/YYYY"),
                 "fornecedor": st.column_config.TextColumn("Fornecedor"),
                 "qtde": st.column_config.NumberColumn("Qtde", min_value=0, step=1),
                 "item": st.column_config.TextColumn("Item"),
