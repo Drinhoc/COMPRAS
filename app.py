@@ -178,7 +178,7 @@ def highlight_status(row: pd.Series) -> list[str]:
         color = "#FFF3BF"
     else:
         color = "#FFD6D6"
-    return [f"background-color: {color}"] * len(row)
+    return pd.Series([f"background-color: {color}"] * len(row), index=row.index)
 
 
 st.title("Sistema de Controle de Requisições")
@@ -232,7 +232,7 @@ with aba_requisicoes:
             if col in editor_df.columns:
                 editor_df[col] = pd.to_datetime(editor_df[col], errors="coerce").dt.date
         edited = st.data_editor(
-            editor_df.style.apply(highlight_status, axis=1),
+            editor_df.style.apply(highlight_status, axis=1, subset=editor_df.columns),
             key="editor_requisicoes",
             use_container_width=True,
             column_config={
@@ -286,15 +286,21 @@ with aba_requisicoes:
                 st.info("Nenhuma alteração para salvar.")
 
         st.markdown("### Excluir requisição")
-        delete_id = st.selectbox("Selecione o ID para excluir", df_edit["id"].tolist())
-        confirm_delete = st.checkbox("Confirmar exclusão", key="confirm_delete")
+        delete_id = st.number_input("ID da requisição", min_value=1, step=1, value=1)
         if st.button("Excluir"):
-            if not confirm_delete:
-                st.warning("Confirme a exclusão antes de continuar.")
-            else:
-                crud.delete_requisicao(int(delete_id))
-                st.success("Requisição excluída.")
-                st.experimental_rerun()
+            st.session_state.delete_id_pending = int(delete_id)
+        if st.session_state.get("delete_id_pending"):
+            st.warning(f"Confirma excluir a requisição #{st.session_state.delete_id_pending}?")
+            col_confirm, col_cancel = st.columns(2)
+            with col_confirm:
+                if st.button("Confirmar exclusão"):
+                    crud.delete_requisicao(int(st.session_state.delete_id_pending))
+                    st.session_state.pop("delete_id_pending", None)
+                    st.success("Requisição excluída.")
+                    st.experimental_rerun()
+            with col_cancel:
+                if st.button("Cancelar"):
+                    st.session_state.pop("delete_id_pending", None)
     else:
         st.info("Nenhum registro encontrado com os filtros atuais.")
 
