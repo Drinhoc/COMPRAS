@@ -215,6 +215,8 @@ with aba_dashboard:
 
 with aba_requisicoes:
     st.subheader("Requisições")
+    if st.button("Atualizar tabela"):
+        st.experimental_rerun()
     total_registros = crud.count_requisicoes(filters)
     page_size = st.selectbox("Registros por página", [10, 20, 50], index=1)
     total_paginas = max(1, (total_registros + page_size - 1) // page_size)
@@ -286,6 +288,17 @@ with aba_requisicoes:
                 st.experimental_rerun()
             else:
                 st.info("Nenhuma alteração para salvar.")
+
+        st.markdown("### Excluir requisição")
+        delete_id = st.selectbox("Selecione o ID para excluir", df_edit["id"].tolist())
+        confirm_delete = st.checkbox("Confirmar exclusão", key="confirm_delete")
+        if st.button("Excluir"):
+            if not confirm_delete:
+                st.warning("Confirme a exclusão antes de continuar.")
+            else:
+                crud.delete_requisicao(int(delete_id))
+                st.success("Requisição excluída.")
+                st.experimental_rerun()
     else:
         st.info("Nenhum registro encontrado com os filtros atuais.")
 

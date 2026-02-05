@@ -106,3 +106,8 @@ def create_requisicao(data: dict[str, Any]) -> None:
             text(f"INSERT INTO requisicoes ({columns}) VALUES ({placeholders})"),
             data,
         )
+
+
+def delete_requisicao(requisicao_id: int) -> None:
+    with ENGINE.begin() as conn:
+        conn.execute(text("DELETE FROM requisicoes WHERE id = :id"), {"id": requisicao_id})
