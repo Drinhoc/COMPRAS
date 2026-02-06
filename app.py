@@ -8,6 +8,7 @@ from datetime import date
 
 import pandas as pd
 import streamlit as st
+from st_aggrid import AgGrid, GridOptionsBuilder, JsCode
 
 from src import crud, excel_io, metrics
 from src.auth import require_pin
@@ -184,6 +185,29 @@ def highlight_status(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(colors, index=df.index, columns=df.columns)
 
 
+def build_payload_from_row(row: pd.Series, original: pd.Series) -> dict:
+    payload = {col: original.get(col) for col in COLUMN_ORDER}
+    payload.update(
+        {
+            "empresa": excel_io.normalize_text(row.get("empresa")),
+            "setor": excel_io.normalize_text(row.get("setor")),
+            "requisicao": str(row.get("requisicao") or "").strip(),
+            "data_solicitacao": excel_io.parse_date(row.get("data_solicitacao")),
+            "data_compra": excel_io.parse_date(row.get("data_compra")),
+            "fornecedor": excel_io.normalize_text(row.get("fornecedor")),
+            "qtde": excel_io.parse_int(row.get("qtde")),
+            "item": str(row.get("item") or "").strip(),
+            "entrega": str(row.get("entrega") or "").strip(),
+            "situacao": excel_io.normalize_text(row.get("situacao")),
+            "valor": excel_io.parse_decimal(row.get("valor")),
+            "valor_desconto": excel_io.parse_decimal(row.get("valor_desconto")),
+            "nf": str(row.get("nf") or "").strip() or None,
+            "observacao": str(row.get("observacao") or "").strip(),
+        }
+    )
+    return payload
+
+
 st.title("Sistema de Controle de Requisições")
 
 aba_dashboard, aba_requisicoes, aba_importar = st.tabs([
@@ -234,51 +258,41 @@ with aba_requisicoes:
         for col in ["data_solicitacao", "data_compra"]:
             if col in editor_df.columns:
                 editor_df[col] = pd.to_datetime(editor_df[col], errors="coerce").dt.date
-        edited = st.data_editor(
-            editor_df.style.apply(highlight_status, axis=None),
-            key="editor_requisicoes",
-            use_container_width=True,
-            column_config={
-                "id": st.column_config.NumberColumn("ID", disabled=True),
-                "empresa": st.column_config.TextColumn("Empresa"),
-                "setor": st.column_config.TextColumn("Setor"),
-                "requisicao": st.column_config.TextColumn("Requisição"),
-                "data_solicitacao": st.column_config.DateColumn("Data Solicitação", format="DD/MM/YYYY"),
-                "data_compra": st.column_config.DateColumn("Data Compra", format="DD/MM/YYYY"),
-                "fornecedor": st.column_config.TextColumn("Fornecedor"),
-                "qtde": st.column_config.NumberColumn("Qtde", min_value=0, step=1),
-                "item": st.column_config.TextColumn("Item"),
-                "entrega": st.column_config.TextColumn("Entrega"),
-                "situacao": st.column_config.SelectboxColumn("Situação", options=STATUS_LIST),
-                "valor": st.column_config.NumberColumn("Valor", step=0.01),
-                "valor_desconto": st.column_config.NumberColumn("Valor Desconto", step=0.01),
-                "nf": st.column_config.TextColumn("NF"),
-                "observacao": st.column_config.TextColumn("Observação"),
-            },
+        gb = GridOptionsBuilder.from_dataframe(editor_df)
+        gb.configure_default_column(editable=True, filter=True, sortable=True, resizable=True)
+        gb.configure_column("id", editable=False)
+        gb.configure_column("situacao", cellEditor="agSelectCellEditor", cellEditorParams={"values": STATUS_LIST})
+        gb.configure_column("qtde", type=["numericColumn"])
+        gb.configure_column("valor", type=["numericColumn"])
+        gb.configure_column("valor_desconto", type=["numericColumn"])
+        gb.configure_grid_options(
+            getRowStyle=JsCode(
+                """
+                function(params) {
+                    const status = (params.data.situacao || '').toString().trim().toUpperCase();
+                    if (status === 'CONCLUÍDO' || status === 'ENTREGUE') return {backgroundColor: '#D1F7C4'};
+                    if (status === 'COMPRADO') return {backgroundColor: '#FFF3BF'};
+                    return {backgroundColor: '#FFD6D6'};
+                }
+                """
+            )
         )
+        grid = AgGrid(
+            editor_df,
+            gridOptions=gb.build(),
+            update_mode="MODEL_CHANGED",
+            fit_columns_on_grid_load=True,
+            allow_unsafe_jscode=True,
+            theme="streamlit",
+            key="editor_requisicoes",
+            height=420,
+        )
+        edited = pd.DataFrame(grid["data"])
         if st.button("Salvar alterações"):
             changes = 0
             for _, row in edited.iterrows():
                 original = df_edit.loc[df_edit["id"] == row["id"]].iloc[0]
-                payload = {col: original.get(col) for col in COLUMN_ORDER}
-                payload.update(
-                    {
-                        "empresa": excel_io.normalize_text(row.get("empresa")),
-                        "setor": excel_io.normalize_text(row.get("setor")),
-                        "requisicao": str(row.get("requisicao") or "").strip(),
-                        "data_solicitacao": excel_io.parse_date(row.get("data_solicitacao")),
-                        "data_compra": excel_io.parse_date(row.get("data_compra")),
-                        "fornecedor": excel_io.normalize_text(row.get("fornecedor")),
-                        "qtde": excel_io.parse_int(row.get("qtde")),
-                        "item": str(row.get("item") or "").strip(),
-                        "entrega": str(row.get("entrega") or "").strip(),
-                        "situacao": excel_io.normalize_text(row.get("situacao")),
-                        "valor": excel_io.parse_decimal(row.get("valor")),
-                        "valor_desconto": excel_io.parse_decimal(row.get("valor_desconto")),
-                        "nf": str(row.get("nf") or "").strip() or None,
-                        "observacao": str(row.get("observacao") or "").strip(),
-                    }
-                )
+                payload = build_payload_from_row(row, original)
                 if any(payload[col] != original.get(col) for col in COLUMN_ORDER):
                     crud.update_requisicao(int(row["id"]), payload)
                     changes += 1
