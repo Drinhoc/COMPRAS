@@ -170,15 +170,18 @@ def validate_payload(payload: dict) -> list[str]:
     return errors
 
 
-def highlight_status(row: pd.Series) -> list[str]:
-    status = str(row.get("situacao", "")).strip().upper()
-    if status in {"CONCLUÍDO", "ENTREGUE"}:
-        color = "#D1F7C4"
-    elif status == "COMPRADO":
-        color = "#FFF3BF"
-    else:
-        color = "#FFD6D6"
-    return pd.Series([f"background-color: {color}"] * len(row), index=row.index)
+def highlight_status(df: pd.DataFrame) -> pd.DataFrame:
+    colors = []
+    for status_value in df.get("situacao", []):
+        status = str(status_value or "").strip().upper()
+        if status in {"CONCLUÍDO", "ENTREGUE"}:
+            color = "#D1F7C4"
+        elif status == "COMPRADO":
+            color = "#FFF3BF"
+        else:
+            color = "#FFD6D6"
+        colors.append([f"background-color: {color}"] * len(df.columns))
+    return pd.DataFrame(colors, index=df.index, columns=df.columns)
 
 
 st.title("Sistema de Controle de Requisições")
@@ -232,7 +235,7 @@ with aba_requisicoes:
             if col in editor_df.columns:
                 editor_df[col] = pd.to_datetime(editor_df[col], errors="coerce").dt.date
         edited = st.data_editor(
-            editor_df.style.apply(highlight_status, axis=1, subset=editor_df.columns),
+            editor_df.style.apply(highlight_status, axis=None),
             key="editor_requisicoes",
             use_container_width=True,
             column_config={
