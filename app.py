@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import io
 import os
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 import streamlit as st
@@ -23,8 +23,19 @@ st.markdown(
         [data-testid="metric-container"] {
             border: 1px solid #dee2e6;
             border-radius: 10px;
-            padding: 12px;
+            padding: 10px 12px;
             background-color: #f8f9fa;
+        }
+        [data-testid="stMetricValue"] {
+            font-size: 1.05rem !important;
+            line-height: 1.3 !important;
+            word-break: break-word;
+        }
+        [data-testid="stMetricLabel"] {
+            font-size: 0.76rem !important;
+        }
+        [data-testid="stMetricDelta"] {
+            font-size: 0.74rem !important;
         }
     </style>
     """,
@@ -108,28 +119,70 @@ def resolve_selected_req_id(selected_rows: object) -> int | None:
 
 def render_filters() -> dict:
     st.sidebar.header("Filtros")
-    preset = st.sidebar.radio(
+
+    # ── Contadores por preset ─────────────────────────────────────────────
+    _ct = crud.count_requisicoes({})
+    _cp = crud.count_requisicoes({"situacao": ["Solicitado"]})
+    _cc = crud.count_requisicoes({"situacao": ["Comprado"]})
+    _cn = crud.count_requisicoes({"situacao": ["Concluído"]})
+
+    _preset_labels = [
+        f"Todos ({_ct})",
+        f"Pendentes ({_cp})",
+        f"Comprados ({_cc})",
+        f"Concluídos ({_cn})",
+    ]
+    _preset_situacoes = [[], ["Solicitado"], ["Comprado"], ["Concluído"]]
+
+    preset_label = st.sidebar.radio(
         "Visualização rápida",
-        ["Todos", "Pendentes", "Comprados", "Concluídos"],
+        _preset_labels,
         horizontal=False,
         key="f_preset",
     )
+    preset_idx = _preset_labels.index(preset_label) if preset_label in _preset_labels else 0
+    preset_situacoes = _preset_situacoes[preset_idx]
 
     if st.sidebar.button("🔄 Limpar Filtros", use_container_width=True):
         for key in [
             "f_empresa", "f_setor", "f_projeto", "f_fornecedor", "f_situacao",
             "f_data_solicitacao", "f_data_compra", "f_texto", "f_preset",
+            "_last_dialog_req_id",
         ]:
             st.session_state.pop(key, None)
         st.rerun()
 
-    preset_map = {
-        "Todos": [],
-        "Pendentes": ["Solicitado"],
-        "Comprados": ["Comprado"],
-        "Concluídos": ["Concluído"],
-    }
+    # ── Busca global sempre visível ───────────────────────────────────────
+    texto = st.sidebar.text_input(
+        "🔍 Buscar item, fornecedor, req...",
+        key="f_texto",
+        placeholder="Digite para filtrar...",
+    )
 
+    # ── Atalhos de período ────────────────────────────────────────────────
+    st.sidebar.caption("Período rápido:")
+    _sc1, _sc2 = st.sidebar.columns(2)
+    _today = date.today()
+    if _sc1.button("Hoje", use_container_width=True):
+        st.session_state["f_data_solicitacao"] = (_today, _today)
+        st.rerun()
+    if _sc2.button("Esta semana", use_container_width=True):
+        _ini_sem = _today - timedelta(days=_today.weekday())
+        st.session_state["f_data_solicitacao"] = (_ini_sem, _today)
+        st.rerun()
+    if _sc1.button("Este mês", use_container_width=True):
+        st.session_state["f_data_solicitacao"] = (date(_today.year, _today.month, 1), _today)
+        st.rerun()
+    if _sc2.button("Último mês", use_container_width=True):
+        _primeiro_mes = date(_today.year, _today.month, 1)
+        _ultimo_mes_ant = _primeiro_mes - timedelta(days=1)
+        st.session_state["f_data_solicitacao"] = (
+            date(_ultimo_mes_ant.year, _ultimo_mes_ant.month, 1),
+            _ultimo_mes_ant,
+        )
+        st.rerun()
+
+    # ── Filtros avançados ─────────────────────────────────────────────────
     empresas = crud.fetch_distinct("empresa")
     setores = crud.fetch_distinct("setor")
     projetos = crud.fetch_distinct("projeto")
@@ -141,11 +194,14 @@ def render_filters() -> dict:
         projeto = st.multiselect("Projeto", projetos, key="f_projeto")
         fornecedor = st.multiselect("Fornecedor", fornecedores, key="f_fornecedor")
         situacao = st.multiselect("Situação", STATUS_LIST, key="f_situacao")
-        data_sol = st.date_input("Período Data Solicitação", value=(), key="f_data_solicitacao")
+        data_sol = st.date_input(
+            "Período Data Solicitação",
+            value=st.session_state.get("f_data_solicitacao", ()),
+            key="f_data_solicitacao",
+        )
         data_compra = st.date_input("Período Data Compra", value=(), key="f_data_compra")
-        texto = st.text_input("Busca texto", key="f_texto")
 
-    situacoes_aplicadas = situacao or preset_map[preset]
+    situacoes_aplicadas = situacao or preset_situacoes
 
     filters: dict = {
         "empresa": empresa,
@@ -160,6 +216,16 @@ def render_filters() -> dict:
         filters["data_solicitacao"] = (data_sol[0].isoformat(), data_sol[1].isoformat())
     if isinstance(data_compra, tuple) and len(data_compra) == 2:
         filters["data_compra"] = (data_compra[0].isoformat(), data_compra[1].isoformat())
+
+    # ── Indicador de filtros ativos ───────────────────────────────────────
+    _label_map = {
+        "empresa": "Empresa", "setor": "Setor", "projeto": "Projeto",
+        "fornecedor": "Fornecedor", "situacao": "Situação",
+        "texto": "Busca", "data_solicitacao": "Data Sol.", "data_compra": "Data Compra",
+    }
+    _ativos = [_label_map.get(k, k) for k, v in filters.items() if v and v != [] and v is not None]
+    if _ativos:
+        st.sidebar.caption(f"🔍 {len(_ativos)} filtro(s): {', '.join(_ativos)}")
 
     return filters
 
@@ -504,9 +570,11 @@ def open_requisicao_dialog(selected_req_id: int) -> None:
 
 st.title("Sistema de Controle de Requisições")
 
+_badge_count = crud.count_requisicoes(filters)
+
 aba_dashboard, aba_requisicoes, aba_analises, aba_projetos, aba_importar = st.tabs([
     "📊 Dashboard",
-    "📋 Requisições",
+    f"📋 Requisições ({_badge_count})",
     "📈 Análises",
     "📁 Projetos",
     "📥 Importar",
@@ -748,8 +816,15 @@ with aba_requisicoes:
         gb.configure_column("fornecedor",       headerName="Fornecedor", width=160)
         gb.configure_column("valor",            headerName="Valor (R$)",
                             type=["numericColumn"], width=115)
-        gb.configure_column("situacao",         headerName="Status",
-                            width=115, suppressSizeToFit=True)
+        gb.configure_column(
+            "situacao",
+            headerName="Status",
+            width=130,
+            suppressSizeToFit=True,
+            editable=True,
+            cellEditor="agSelectCellEditor",
+            cellEditorParams={"values": STATUS_LIST},
+        )
         gb.configure_selection("single", use_checkbox=False)
         gb.configure_grid_options(
             suppressRowClickSelection=True,
@@ -761,7 +836,7 @@ with aba_requisicoes:
         grid_result = AgGrid(
             df_grid,
             gridOptions=gb.build(),
-            update_mode=GridUpdateMode.SELECTION_CHANGED,
+            update_mode=GridUpdateMode.VALUE_CHANGED | GridUpdateMode.SELECTION_CHANGED,
             fit_columns_on_grid_load=True,
             allow_unsafe_jscode=True,
             theme="streamlit",
@@ -769,14 +844,32 @@ with aba_requisicoes:
             height=520,
         )
 
+        # ── Detectar mudança de status inline ────────────────────────────
+        df_returned = grid_result.get("data")
+        if df_returned is not None and not df_returned.empty and "id" in df_returned.columns:
+            for _, ret_row in df_returned.iterrows():
+                _rid = ret_row.get("id")
+                _new_sit = ret_row.get("situacao", "")
+                if _rid is None or not _new_sit:
+                    continue
+                _orig = df_grid.loc[df_grid["id"] == _rid, "situacao"]
+                if not _orig.empty and str(_orig.iloc[0]) != str(_new_sit):
+                    crud.update_requisicao(int(_rid), {"situacao": str(_new_sit)})
+                    st.toast(f"Status #{int(_rid)} → {_new_sit}", icon="✅")
+                    st.session_state.pop("_last_dialog_req_id", None)
+                    st.rerun()
+
+        # ── Detectar seleção para abrir dialog ────────────────────────────
         selected_rows = grid_result.get("selected_rows")
         selected_id = resolve_selected_req_id(selected_rows)
         if selected_id is not None:
-            st.session_state.selected_req_id = selected_id
-            st.session_state.open_req_dialog = True
+            if selected_id != st.session_state.get("_last_dialog_req_id"):
+                st.session_state.selected_req_id = selected_id
+                st.session_state.open_req_dialog = True
 
         if st.session_state.get("open_req_dialog") and st.session_state.get("selected_req_id") is not None:
             st.session_state.open_req_dialog = False
+            st.session_state["_last_dialog_req_id"] = st.session_state["selected_req_id"]
             open_requisicao_dialog(int(st.session_state["selected_req_id"]))
 
     else:
