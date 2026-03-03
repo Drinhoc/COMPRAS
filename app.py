@@ -9,6 +9,7 @@ from datetime import date
 import pandas as pd
 import streamlit as st
 from st_aggrid import AgGrid, GridOptionsBuilder, JsCode
+from st_aggrid.shared import GridUpdateMode
 
 from src import crud, excel_io, metrics
 from src.constants import COLUMN_ORDER, DISPLAY_NAMES, STATUS_LIST
@@ -16,6 +17,17 @@ from src.db import get_database_url, init_db, is_sqlite_url
 
 
 st.set_page_config(page_title="Controle de Compras", layout="wide")
+st.markdown(
+    """
+    <style>
+        [data-testid="stSidebar"] {
+            min-width: 400px;
+            max-width: 400px;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 database_url = get_database_url()
 if is_sqlite_url(database_url):
     st.warning(
@@ -426,7 +438,7 @@ with aba_requisicoes:
         grid_edit = AgGrid(
             editable_df,
             gridOptions=gb_edit.build(),
-            update_mode="MODEL_CHANGED",
+            update_mode=GridUpdateMode.MODEL_CHANGED | GridUpdateMode.SELECTION_CHANGED,
             fit_columns_on_grid_load=True,
             allow_unsafe_jscode=True,
             theme="streamlit",
