@@ -94,11 +94,11 @@ As métricas respeitam os filtros da sidebar:
 - Exporta apenas os registros filtrados.
 - O arquivo é baixado direto no navegador.
 
-## ✅ Fluxo mestre-detalhe, Aprovação, Orçamentos e Anexos
-- A aba **Requisições** usa layout **mestre-detalhe**: lista à esquerda e contexto completo à direita.
-- Abas do detalhe: **Resumo**, **Orçamentos**, **Anexos**, **Aprovação** e **Histórico**.
-- Filtros com preset rápido (`Todos`, `Pendentes`, `Comprados`, `Entregues`) e seção de filtros avançados recolhível.
-- Há uma aba dedicada **Pendentes de Aprovação** para gestão diária.
+## ✅ Fluxo de UX atualizado (edição rápida + gestão detalhada)
+- A aba **Requisições** começa com uma grade de **edição rápida** (inline), com botão único para salvar alterações em lote.
+- Abaixo, há uma visão **mestre-detalhe** mais limpa: lista de requisições à esquerda e painel de gestão à direita.
+- O painel da requisição selecionada usa navegação horizontal: **Resumo**, **Orçamentos**, **Anexos**, **Aprovação** e **Histórico**.
+- Inclui opção de foco rápido em pendentes (`Solicitado`) sem abrir uma aba separada.
 
 > Observação: os anexos ficam salvos no próprio banco (BLOB). Para manter boa performance no MVP, use arquivos pequenos/médios e evite anexos muito grandes.
 
