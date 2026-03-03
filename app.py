@@ -104,7 +104,7 @@ with st.sidebar.expander("Admin (MVP)", expanded=False):
             st.session_state.pop("selected_req_id", None)
             st.session_state.pop("delete_id_pending", None)
             st.success("Base limpa com sucesso.")
-            st.experimental_rerun()
+            st.rerun()
 
 
 def render_requisicao_form(prefix: str, data: dict | None = None) -> dict:
@@ -359,7 +359,7 @@ with aba_requisicoes:
     col_actions1, col_actions2 = st.columns([1, 1])
     with col_actions1:
         if st.button("Atualizar tabela"):
-            st.experimental_rerun()
+            st.rerun()
     with col_actions2:
         somente_pendentes = st.checkbox("Mostrar somente pendentes (Solicitado)", value=False)
 
@@ -427,7 +427,7 @@ with aba_requisicoes:
                     changes += 1
             if changes:
                 st.toast(f"{changes} requisições atualizadas.", icon="✅")
-                st.experimental_rerun()
+                st.rerun()
             else:
                 st.info("Nenhuma alteração detectada.")
 
@@ -501,7 +501,7 @@ with aba_requisicoes:
                                 else:
                                     crud.update_requisicao(selected_req_id, payload)
                                     st.toast("Requisição atualizada com sucesso.", icon="✅")
-                                    st.experimental_rerun()
+                                    st.rerun()
 
                         if st.button("Excluir requisição selecionada", key=f"btn_del_req_{selected_req_id}"):
                             st.session_state.delete_id_pending = selected_req_id
@@ -514,7 +514,7 @@ with aba_requisicoes:
                                     st.session_state.pop("delete_id_pending", None)
                                     st.session_state.pop("selected_req_id", None)
                                     st.toast("Requisição excluída.", icon="🗑️")
-                                    st.experimental_rerun()
+                                    st.rerun()
                             with c_cancel:
                                 if st.button("Cancelar", key=f"cancel_del_req_{selected_req_id}"):
                                     st.session_state.pop("delete_id_pending", None)
@@ -540,7 +540,7 @@ with aba_requisicoes:
                                 req_data["situacao"] = "Comprado"
                                 crud.update_requisicao(selected_req_id, req_data)
                             st.toast("Ação de aprovação registrada.", icon="✅")
-                            st.experimental_rerun()
+                            st.rerun()
 
             lower_col1, lower_col2 = st.columns(2)
             with lower_col1:
@@ -568,13 +568,13 @@ with aba_requisicoes:
                                 }
                             )
                             st.toast("Orçamento adicionado.", icon="✅")
-                            st.experimental_rerun()
+                            st.rerun()
                     if orcs:
                         del_orc = st.selectbox("Excluir orçamento (ID)", [o["id"] for o in orcs], key=f"del_orc_{selected_req_id}")
                         if st.button("Excluir orçamento", key=f"btn_del_orc_{selected_req_id}"):
                             crud.delete_orcamento(int(del_orc))
                             st.toast("Orçamento excluído.", icon="🗑️")
-                            st.experimental_rerun()
+                            st.rerun()
 
             with lower_col2:
                 with st.expander("Anexos", expanded=True):
@@ -595,7 +595,7 @@ with aba_requisicoes:
                             }
                         )
                         st.toast("Anexo salvo.", icon="✅")
-                        st.experimental_rerun()
+                        st.rerun()
                     if anexos:
                         anexo_id = st.selectbox("Baixar/Excluir anexo (ID)", [a["id"] for a in anexos], key=f"anexo_ops_{selected_req_id}")
                         anexo = crud.get_anexo_conteudo(int(anexo_id))
@@ -610,7 +610,7 @@ with aba_requisicoes:
                         if st.button("Excluir anexo", key=f"del_anexo_{selected_req_id}"):
                             crud.delete_anexo(int(anexo_id))
                             st.toast("Anexo excluído.", icon="🗑️")
-                            st.experimental_rerun()
+                            st.rerun()
 
             with st.expander("Histórico", expanded=True):
                 historico: list[dict] = []
@@ -666,7 +666,7 @@ with aba_requisicoes:
             else:
                 crud.create_requisicao(payload)
                 st.toast("Requisição criada com sucesso.", icon="✅")
-                st.experimental_rerun()
+                st.rerun()
 
     if st.button("Exportar Excel", key="export_requisicoes"):
         df_export = metrics.fetch_dataframe(req_filters)
@@ -720,7 +720,7 @@ with aba_importar:
         if st.button("Limpar arquivo carregado"):
             st.session_state.pop("import_file_bytes", None)
             st.session_state.pop("import_file_name", None)
-            st.experimental_rerun()
+            st.rerun()
 
         if st.button("Importar"):
             df_raw = excel_io.load_excel(io.BytesIO(file_bytes), sheet_name=sheet_name)
