@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from typing import Iterable
 
-from sqlalchemy import Column, Float, Integer, MetaData, String, Table, create_engine, text
+from sqlalchemy import Column, Float, Integer, LargeBinary, MetaData, String, Table, create_engine, text
 
 from .constants import COLUMN_ORDER
 
@@ -32,6 +32,45 @@ requisicoes = Table(
     Column("valor_desconto", Float),
     Column("nf", String),
     Column("observacao", String),
+)
+
+orcamentos = Table(
+    "orcamentos",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("requisicao_id", Integer, nullable=False),
+    Column("fornecedor", String),
+    Column("valor", Float),
+    Column("prazo_entrega", String),
+    Column("condicoes_pagamento", String),
+    Column("status_orcamento", String),
+    Column("observacao", String),
+    Column("created_at", String, server_default=text("CURRENT_TIMESTAMP")),
+)
+
+anexos = Table(
+    "anexos",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("requisicao_id", Integer, nullable=False),
+    Column("orcamento_id", Integer),
+    Column("tipo", String),
+    Column("nome_arquivo", String, nullable=False),
+    Column("mime_type", String),
+    Column("conteudo", LargeBinary, nullable=False),
+    Column("uploaded_at", String, server_default=text("CURRENT_TIMESTAMP")),
+    Column("uploaded_by", String),
+)
+
+aprovacoes = Table(
+    "aprovacoes",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("requisicao_id", Integer, nullable=False),
+    Column("acao", String, nullable=False),
+    Column("comentario", String),
+    Column("aprovador", String),
+    Column("created_at", String, server_default=text("CURRENT_TIMESTAMP")),
 )
 
 
@@ -64,55 +103,6 @@ ENGINE = get_engine()
 
 def init_db() -> None:
     metadata.create_all(ENGINE)
-    with ENGINE.begin() as conn:
-        conn.execute(
-            text(
-                """
-                CREATE TABLE IF NOT EXISTS orcamentos (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    requisicao_id INTEGER NOT NULL,
-                    fornecedor TEXT,
-                    valor REAL,
-                    prazo_entrega TEXT,
-                    condicoes_pagamento TEXT,
-                    status_orcamento TEXT,
-                    observacao TEXT,
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
-        )
-        conn.execute(
-            text(
-                """
-                CREATE TABLE IF NOT EXISTS anexos (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    requisicao_id INTEGER NOT NULL,
-                    orcamento_id INTEGER,
-                    tipo TEXT,
-                    nome_arquivo TEXT NOT NULL,
-                    mime_type TEXT,
-                    conteudo BLOB NOT NULL,
-                    uploaded_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                    uploaded_by TEXT
-                )
-                """
-            )
-        )
-        conn.execute(
-            text(
-                """
-                CREATE TABLE IF NOT EXISTS aprovacoes (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    requisicao_id INTEGER NOT NULL,
-                    acao TEXT NOT NULL,
-                    comentario TEXT,
-                    aprovador TEXT,
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
-        )
 
 
 def insert_many(rows: Iterable[dict]) -> int:
