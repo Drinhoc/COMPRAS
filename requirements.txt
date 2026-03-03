@@ -6,3 +6,4 @@ SQLAlchemy==2.0.27
 psycopg2-binary==2.9.9
 
 streamlit-aggrid==1.0.5
+plotly>=5.18.0

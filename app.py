@@ -504,55 +504,126 @@ def open_requisicao_dialog(selected_req_id: int) -> None:
 
 st.title("Sistema de Controle de Requisições")
 
-aba_dashboard, aba_requisicoes, aba_projetos, aba_importar = st.tabs([
+aba_dashboard, aba_requisicoes, aba_analises, aba_projetos, aba_importar = st.tabs([
     "📊 Dashboard",
     "📋 Requisições",
+    "📈 Análises",
     "📁 Projetos",
     "📥 Importar",
 ])
 
 # ---- Dashboard ----
 with aba_dashboard:
-    st.subheader("Métricas")
+    import plotly.express as px
+
+    st.subheader("Visão Geral")
     df_metrics = metrics.fetch_dataframe(filters)
 
-    total_gasto = metrics.total_gasto(df_metrics)
-    valor_total = (
-        df_metrics.get("valor", pd.Series(dtype=float)).fillna(0).sum()
-        if not df_metrics.empty else 0.0
-    )
-    valor_desconto_total = (
-        df_metrics.get("valor_desconto", pd.Series(dtype=float)).fillna(0).sum()
-        if not df_metrics.empty else 0.0
-    )
+    # Cálculos principais
+    _valor_total = float(df_metrics["valor"].fillna(0).sum()) if not df_metrics.empty else 0.0
+    _desconto_total = float(df_metrics["valor_desconto"].fillna(0).sum()) if not df_metrics.empty else 0.0
+    _total_reqs = len(df_metrics)
+    _em_aberto = metrics.valor_em_aberto(df_metrics)
+    _ticket = metrics.ticket_medio(df_metrics)
+    _tempo_med = metrics.tempo_medio_atendimento(df_metrics)
+    _saving_pct = (_desconto_total / _valor_total * 100) if _valor_total else 0.0
 
-    pendentes_mask = (
-        df_metrics.get("situacao", pd.Series(dtype=str))
-        .fillna("").str.upper().eq("SOLICITADO")
-        if not df_metrics.empty else pd.Series(dtype=bool)
+    # --- Bloco 1: KPIs principais ---
+    k1, k2, k3, k4, k5, k6 = st.columns(6)
+    k1.metric("📦 Total de Requisições", str(_total_reqs))
+    k2.metric("💰 Valor Total", format_currency(_valor_total))
+    k3.metric("💼 Em Aberto", format_currency(_em_aberto))
+    k4.metric("🎯 Ticket Médio", format_currency(_ticket))
+    k5.metric(
+        "⏱️ Tempo Médio",
+        f"{_tempo_med:.1f} dias" if _tempo_med else "—",
     )
-    pendentes_df = df_metrics[pendentes_mask] if not df_metrics.empty and not pendentes_mask.empty else pd.DataFrame()
-    total_aberto = (
-        (pendentes_df.get("valor", pd.Series(dtype=float)).fillna(0))
-        - (pendentes_df.get("valor_desconto", pd.Series(dtype=float)).fillna(0))
-    ).sum() if not pendentes_df.empty else 0.0
-    qtd_pendentes = int(len(pendentes_df))
-    saving_pct = (valor_desconto_total / valor_total * 100) if valor_total else 0.0
-
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("💰 Total Gasto", format_currency(total_gasto))
-    k2.metric("📌 Em Aberto", format_currency(float(total_aberto)))
-    k3.metric("🧾 Pedidos Pendentes", str(qtd_pendentes))
-    k4.metric("📉 Saving", f"{saving_pct:.2f}%")
+    k6.metric(
+        "📉 Saving",
+        f"{_saving_pct:.2f}%" if _saving_pct else "—",
+    )
 
     st.markdown("---")
+
+    # --- Bloco 2: Breakdown por status ---
+    st.markdown("**Situação das Requisições**")
+    df_sit = metrics.contagem_por_situacao(df_metrics)
+    if not df_sit.empty:
+        _status_cols = st.columns(len(df_sit))
+        for i, row in df_sit.iterrows():
+            _status_cols[i % len(_status_cols)].metric(
+                label=str(row["situacao"] or "Sem status"),
+                value=str(int(row["quantidade"])),
+                delta=format_currency(float(row["valor_total"])),
+                delta_color="off",
+            )
+    else:
+        st.info("Sem dados de situação.")
+
+    st.markdown("---")
+
+    # --- Bloco 3: Gráficos ---
+    gc1, gc2 = st.columns(2)
+    with gc1:
+        st.markdown("**Valor por Status**")
+        if not df_sit.empty:
+            fig_sit = px.bar(
+                df_sit.sort_values("valor_total"),
+                x="valor_total",
+                y="situacao",
+                orientation="h",
+                labels={"valor_total": "Valor (R$)", "situacao": ""},
+                color="situacao",
+                color_discrete_sequence=px.colors.qualitative.Set2,
+            )
+            fig_sit.update_layout(
+                showlegend=False,
+                margin=dict(l=0, r=0, t=10, b=0),
+                height=300,
+            )
+            st.plotly_chart(fig_sit, use_container_width=True)
+        else:
+            st.info("Sem dados.")
+
+    with gc2:
+        st.markdown("**Top 10 Fornecedores por Valor**")
+        df_top_forn = metrics.top_fornecedores(df_metrics, n=10)
+        if not df_top_forn.empty:
+            fig_forn = px.bar(
+                df_top_forn.sort_values("valor_total"),
+                x="valor_total",
+                y="fornecedor",
+                orientation="h",
+                labels={"valor_total": "Valor (R$)", "fornecedor": ""},
+                color_discrete_sequence=["#4C72B0"],
+            )
+            fig_forn.update_layout(
+                showlegend=False,
+                margin=dict(l=0, r=0, t=10, b=0),
+                height=300,
+            )
+            st.plotly_chart(fig_forn, use_container_width=True)
+        else:
+            st.info("Sem dados.")
+
+    st.markdown("---")
+
+    # --- Bloco 4: Tabelas resumo ---
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("**Total por Empresa**")
-        st.dataframe(metrics.total_por_empresa(df_metrics), use_container_width=True, hide_index=True)
+        df_emp = metrics.total_por_empresa(df_metrics)
+        if not df_emp.empty:
+            df_emp.columns = ["Empresa", "Total (R$)"]
+            df_emp["Total (R$)"] = df_emp["Total (R$)"].apply(format_currency)
+        st.dataframe(df_emp, use_container_width=True, hide_index=True)
     with col2:
         st.markdown("**Total por Fornecedor**")
-        st.dataframe(metrics.total_por_fornecedor(df_metrics), use_container_width=True, hide_index=True)
+        df_forn_tab = metrics.total_por_fornecedor(df_metrics)
+        if not df_forn_tab.empty:
+            df_forn_tab.columns = ["Fornecedor", "Total (R$)"]
+            df_forn_tab["Total (R$)"] = df_forn_tab["Total (R$)"].apply(format_currency)
+        st.dataframe(df_forn_tab, use_container_width=True, hide_index=True)
 
     st.markdown("---")
     if st.button("📄 Exportar Excel", key="export_dashboard", use_container_width=True):
@@ -685,16 +756,13 @@ with aba_requisicoes:
             rowSelection="single",
             rowHoverHighlight=True,
             getRowStyle=row_style,
-            onFirstDataRendered=JsCode(
-                "function(params) { params.api.sizeColumnsToFit(); }"
-            ),
         )
 
         grid_result = AgGrid(
             df_grid,
             gridOptions=gb.build(),
             update_mode=GridUpdateMode.SELECTION_CHANGED,
-            fit_columns_on_grid_load=False,
+            fit_columns_on_grid_load=True,
             allow_unsafe_jscode=True,
             theme="streamlit",
             key="viewer_requisicoes_v2",
@@ -730,6 +798,256 @@ with aba_requisicoes:
             )
         else:
             st.info("Sem dados para exportar com os filtros atuais.")
+
+
+# ---- Análises ----
+with aba_analises:
+    import plotly.express as px  # noqa: F811 — already imported in dashboard block
+
+    st.subheader("Análises de Compras")
+
+    df_an = metrics.fetch_dataframe(filters)
+
+    if df_an.empty:
+        st.info("Nenhum dado disponível com os filtros atuais.")
+    else:
+        # ── Seção 1: Evolução Temporal ───────────────────────────────────────
+        st.markdown("### 📅 Evolução Temporal")
+        an_c1, an_c2 = st.columns(2)
+
+        with an_c1:
+            st.markdown("**Requisições por Mês (data de solicitação)**")
+            df_evol = metrics.evolucao_mensal(df_an, date_col="data_solicitacao")
+            if not df_evol.empty:
+                fig_evol = px.bar(
+                    df_evol,
+                    x="mes",
+                    y="quantidade",
+                    labels={"mes": "Mês", "quantidade": "Nº Requisições"},
+                    color_discrete_sequence=["#4C72B0"],
+                )
+                fig_evol.update_layout(margin=dict(l=0, r=0, t=10, b=0), height=280)
+                st.plotly_chart(fig_evol, use_container_width=True)
+            else:
+                st.info("Sem datas de solicitação registradas.")
+
+        with an_c2:
+            st.markdown("**Valor Comprado por Mês (data de compra)**")
+            _df_comprado = df_an[
+                df_an["situacao"].fillna("").str.lower().isin(
+                    {"comprado", "concluído", "concluido", "entregue"}
+                )
+            ]
+            df_evol_compra = metrics.evolucao_mensal(_df_comprado, date_col="data_compra")
+            if not df_evol_compra.empty:
+                fig_evol_c = px.line(
+                    df_evol_compra,
+                    x="mes",
+                    y="valor_total",
+                    markers=True,
+                    labels={"mes": "Mês", "valor_total": "Valor (R$)"},
+                    color_discrete_sequence=["#2ca02c"],
+                )
+                fig_evol_c.update_layout(margin=dict(l=0, r=0, t=10, b=0), height=280)
+                st.plotly_chart(fig_evol_c, use_container_width=True)
+            else:
+                st.info("Sem registros de compra com data preenchida.")
+
+        st.markdown("---")
+
+        # ── Seção 2: Distribuição por Status ────────────────────────────────
+        st.markdown("### 📊 Distribuição por Status")
+        df_sit_an = metrics.contagem_por_situacao(df_an)
+        an_s1, an_s2 = st.columns(2)
+
+        with an_s1:
+            st.markdown("**Quantidade de Requisições por Status**")
+            if not df_sit_an.empty:
+                fig_pie = px.pie(
+                    df_sit_an,
+                    names="situacao",
+                    values="quantidade",
+                    hole=0.4,
+                    color_discrete_sequence=px.colors.qualitative.Set2,
+                )
+                fig_pie.update_layout(margin=dict(l=0, r=0, t=10, b=0), height=300)
+                st.plotly_chart(fig_pie, use_container_width=True)
+
+        with an_s2:
+            st.markdown("**Valor Total por Status**")
+            if not df_sit_an.empty:
+                fig_val_sit = px.bar(
+                    df_sit_an.sort_values("valor_total", ascending=False),
+                    x="situacao",
+                    y="valor_total",
+                    labels={"situacao": "", "valor_total": "Valor (R$)"},
+                    color="situacao",
+                    color_discrete_sequence=px.colors.qualitative.Set2,
+                )
+                fig_val_sit.update_layout(
+                    showlegend=False,
+                    margin=dict(l=0, r=0, t=10, b=0),
+                    height=300,
+                )
+                st.plotly_chart(fig_val_sit, use_container_width=True)
+
+        st.markdown("---")
+
+        # ── Seção 3: Análise de Fornecedores ────────────────────────────────
+        st.markdown("### 🏭 Análise de Fornecedores")
+        an_f1, an_f2 = st.columns(2)
+
+        with an_f1:
+            st.markdown("**Top 15 Fornecedores por Valor**")
+            df_top15 = metrics.top_fornecedores(df_an, n=15)
+            if not df_top15.empty:
+                fig_top15 = px.bar(
+                    df_top15.sort_values("valor_total"),
+                    x="valor_total",
+                    y="fornecedor",
+                    orientation="h",
+                    labels={"valor_total": "Valor (R$)", "fornecedor": ""},
+                    color_discrete_sequence=["#4C72B0"],
+                )
+                fig_top15.update_layout(margin=dict(l=0, r=0, t=10, b=0), height=400)
+                st.plotly_chart(fig_top15, use_container_width=True)
+
+        with an_f2:
+            st.markdown("**Curva de Pareto — Concentração de Gasto**")
+            df_pareto = metrics.pareto_fornecedores(df_an)
+            if not df_pareto.empty:
+                df_pareto_top = df_pareto.head(30).copy()
+                df_pareto_top["idx"] = range(1, len(df_pareto_top) + 1)
+                fig_pareto = px.line(
+                    df_pareto_top,
+                    x="idx",
+                    y="acumulado",
+                    markers=True,
+                    labels={"idx": "Nº de Fornecedores", "acumulado": "% Gasto Acumulado"},
+                    color_discrete_sequence=["#d62728"],
+                )
+                fig_pareto.add_hline(
+                    y=80,
+                    line_dash="dash",
+                    line_color="gray",
+                    annotation_text="80%",
+                    annotation_position="right",
+                )
+                fig_pareto.update_layout(margin=dict(l=0, r=0, t=10, b=0), height=400)
+                st.plotly_chart(fig_pareto, use_container_width=True)
+                _forn_80 = int((df_pareto["acumulado"] <= 80).sum())
+                st.caption(
+                    f"**{_forn_80} fornecedor(es)** concentram 80% do gasto total "
+                    f"(de {len(df_pareto)} fornecedores ativos)."
+                )
+
+        st.markdown("---")
+
+        # ── Seção 4: Análise por Empresa/Setor ──────────────────────────────
+        st.markdown("### 🏢 Análise por Empresa")
+        df_emp_an = metrics.metricas_por_empresa(df_an)
+        if not df_emp_an.empty:
+            fig_emp = px.bar(
+                df_emp_an.head(15).sort_values("valor_total"),
+                x="valor_total",
+                y="empresa",
+                orientation="h",
+                labels={"valor_total": "Valor (R$)", "empresa": ""},
+                color_discrete_sequence=["#9467bd"],
+            )
+            fig_emp.update_layout(margin=dict(l=0, r=0, t=10, b=0), height=350)
+            st.plotly_chart(fig_emp, use_container_width=True)
+
+            df_emp_display = df_emp_an.copy()
+            df_emp_display.columns = ["Empresa", "Qtd.", "Valor Total (R$)", "Ticket Médio (R$)"]
+            df_emp_display["Valor Total (R$)"] = df_emp_display["Valor Total (R$)"].apply(format_currency)
+            df_emp_display["Ticket Médio (R$)"] = df_emp_display["Ticket Médio (R$)"].apply(format_currency)
+            st.dataframe(df_emp_display, use_container_width=True, hide_index=True)
+
+        st.markdown("---")
+
+        # ── Seção 5: Análise por Projeto ────────────────────────────────────
+        st.markdown("### 📁 Análise por Projeto")
+        df_proj_an = metrics.metricas_por_projeto(df_an)
+        _df_proj_validos = df_proj_an.dropna(subset=["projeto"])
+        _df_proj_validos = _df_proj_validos[_df_proj_validos["projeto"].str.strip() != ""]
+        if not _df_proj_validos.empty:
+            an_p1, an_p2 = st.columns(2)
+            with an_p1:
+                fig_proj = px.bar(
+                    _df_proj_validos.head(10).sort_values("valor_total"),
+                    x="valor_total",
+                    y="projeto",
+                    orientation="h",
+                    labels={"valor_total": "Valor (R$)", "projeto": ""},
+                    color_discrete_sequence=["#e377c2"],
+                )
+                fig_proj.update_layout(margin=dict(l=0, r=0, t=10, b=0), height=300)
+                st.plotly_chart(fig_proj, use_container_width=True)
+            with an_p2:
+                df_proj_display = _df_proj_validos.copy()
+                df_proj_display.columns = ["Projeto", "Qtd.", "Valor Total (R$)"]
+                df_proj_display["Valor Total (R$)"] = df_proj_display["Valor Total (R$)"].apply(format_currency)
+                st.dataframe(df_proj_display, use_container_width=True, hide_index=True)
+        else:
+            st.info("Nenhum projeto identificado nos dados.")
+
+        st.markdown("---")
+
+        # ── Seção 6: Indicadores de Prazo ───────────────────────────────────
+        st.markdown("### ⏱️ Indicadores de Prazo")
+        an_t1, an_t2 = st.columns(2)
+
+        with an_t1:
+            st.markdown("**Distribuição do Tempo de Atendimento (dias)**")
+            dias_serie = metrics.distribuicao_tempo(df_an)
+            if not dias_serie.empty:
+                fig_hist = px.histogram(
+                    dias_serie,
+                    nbins=30,
+                    labels={"value": "Dias", "count": "Nº Requisições"},
+                    color_discrete_sequence=["#17becf"],
+                )
+                fig_hist.update_layout(
+                    showlegend=False,
+                    margin=dict(l=0, r=0, t=10, b=0),
+                    height=280,
+                    xaxis_title="Dias até a compra",
+                    yaxis_title="Quantidade",
+                )
+                st.plotly_chart(fig_hist, use_container_width=True)
+                st.caption(
+                    f"Mínimo: {int(dias_serie.min())} dias | "
+                    f"Mediana: {int(dias_serie.median())} dias | "
+                    f"Máximo: {int(dias_serie.max())} dias"
+                )
+            else:
+                st.info("Sem registros com data de solicitação e compra preenchidas.")
+
+        with an_t2:
+            st.markdown("**Tempo Médio por Fornecedor**")
+            df_tempo_forn = metrics.tempo_por_fornecedor(df_an)
+            if not df_tempo_forn.empty:
+                df_tf_display = df_tempo_forn.head(15).copy()
+                fig_tf = px.bar(
+                    df_tf_display.sort_values("tempo_medio_dias"),
+                    x="tempo_medio_dias",
+                    y="fornecedor",
+                    orientation="h",
+                    labels={"tempo_medio_dias": "Dias (média)", "fornecedor": ""},
+                    color_discrete_sequence=["#bcbd22"],
+                )
+                fig_tf.update_layout(margin=dict(l=0, r=0, t=10, b=0), height=280)
+                st.plotly_chart(fig_tf, use_container_width=True)
+            else:
+                st.info("Sem dados de prazo por fornecedor.")
+
+        st.markdown("---")
+
+        # ── Seção 7: Tabela completa ─────────────────────────────────────────
+        with st.expander("📋 Tabela Completa de Dados", expanded=False):
+            display_cols = [c for c in COLUMN_ORDER if c in df_an.columns]
+            st.dataframe(df_an[display_cols], use_container_width=True, hide_index=True)
 
 
 # ---- Projetos ----
