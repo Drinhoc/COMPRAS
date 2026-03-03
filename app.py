@@ -612,7 +612,11 @@ with aba_requisicoes:
     if not df_view.empty:
         for col in ["data_solicitacao", "data_compra"]:
             if col in df_view.columns:
-                df_view[col] = pd.to_datetime(df_view[col], errors="coerce").dt.date
+                df_view[col] = (
+                    pd.to_datetime(df_view[col], errors="coerce")
+                    .dt.strftime("%d/%m/%Y")
+                    .fillna("")
+                )
 
         action_renderer = JsCode(
             """
@@ -681,6 +685,9 @@ with aba_requisicoes:
             rowSelection="single",
             rowHoverHighlight=True,
             getRowStyle=row_style,
+            onFirstDataRendered=JsCode(
+                "function(params) { params.api.sizeColumnsToFit(); }"
+            ),
         )
 
         grid_result = AgGrid(
