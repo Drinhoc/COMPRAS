@@ -110,7 +110,7 @@ def render_filters() -> dict:
     st.sidebar.header("Filtros")
     preset = st.sidebar.radio(
         "Visualização rápida",
-        ["Todos", "Pendentes", "Comprados", "Entregues"],
+        ["Todos", "Pendentes", "Comprados", "Concluídos"],
         horizontal=False,
         key="f_preset",
     )
@@ -127,7 +127,7 @@ def render_filters() -> dict:
         "Todos": [],
         "Pendentes": ["Solicitado"],
         "Comprados": ["Comprado"],
-        "Entregues": ["Entregue"],
+        "Concluídos": ["Concluído"],
     }
 
     empresas = crud.fetch_distinct("empresa")
@@ -642,7 +642,7 @@ with aba_requisicoes:
                 if (status === 'COTA\u00c7\u00c3O')   return {backgroundColor: '#FFF3E0', color: '#BF360C'};
                 if (status === 'APROVA\u00c7\u00c3O') return {backgroundColor: '#FFFDE7', color: '#827717'};
                 if (status === 'COMPRADO')   return {backgroundColor: '#E8F5E9', color: '#2E7D32'};
-                if (status === 'ENTREGUE')   return {backgroundColor: '#A5D6A7', color: '#1B5E20'};
+                if (status === 'CONCLU\u00cdDO') return {backgroundColor: '#A5D6A7', color: '#1B5E20'};
                 if (status === 'CANCELADO')  return {backgroundColor: '#EEEEEE', color: '#757575'};
                 return {backgroundColor: '#FFFFFF', color: '#343a40'};
             }
