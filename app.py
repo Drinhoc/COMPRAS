@@ -86,6 +86,26 @@ def render_filters() -> dict:
 
 filters = render_filters()
 
+st.sidebar.markdown("---")
+with st.sidebar.expander("Admin (MVP)", expanded=False):
+    st.caption("Use apenas em fase de criação/homologação.")
+    st.warning("Essa ação apaga TODAS as requisições, orçamentos, anexos e aprovações.")
+    confirm_reset = st.checkbox("Entendo que essa ação é irreversível", key="confirm_reset_all")
+    confirm_text = st.text_input(
+        "Para confirmar, digite LIMPAR TUDO",
+        key="confirm_reset_all_text",
+        placeholder="LIMPAR TUDO",
+    )
+    if st.button("🗑️ Limpar base inteira", key="btn_reset_all_data"):
+        if not confirm_reset or confirm_text.strip().upper() != "LIMPAR TUDO":
+            st.error("Confirmação inválida. Marque a caixa e digite exatamente: LIMPAR TUDO")
+        else:
+            crud.delete_all_data()
+            st.session_state.pop("selected_req_id", None)
+            st.session_state.pop("delete_id_pending", None)
+            st.success("Base limpa com sucesso.")
+            st.experimental_rerun()
+
 
 def render_requisicao_form(prefix: str, data: dict | None = None) -> dict:
     data = data or {}

@@ -196,3 +196,24 @@ def create_aprovacao(data: dict[str, Any]) -> None:
     )
     with ENGINE.begin() as conn:
         conn.execute(query, data)
+
+
+def delete_all_data() -> None:
+    """Remove todos os dados do sistema (requisições e históricos relacionados)."""
+    with ENGINE.begin() as conn:
+        if ENGINE.dialect.name == "postgresql":
+            conn.execute(text("TRUNCATE TABLE aprovacoes, anexos, orcamentos, requisicoes RESTART IDENTITY CASCADE"))
+            return
+
+        conn.execute(text("DELETE FROM aprovacoes"))
+        conn.execute(text("DELETE FROM anexos"))
+        conn.execute(text("DELETE FROM orcamentos"))
+        conn.execute(text("DELETE FROM requisicoes"))
+
+        if ENGINE.dialect.name == "sqlite":
+            conn.execute(
+                text(
+                    "DELETE FROM sqlite_sequence "
+                    "WHERE name IN ('requisicoes', 'orcamentos', 'anexos', 'aprovacoes')"
+                )
+            )

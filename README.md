@@ -102,6 +102,8 @@ As métricas respeitam os filtros da sidebar:
 
 > Observação: os anexos ficam salvos no próprio banco (BLOB). Para manter boa performance no MVP, use arquivos pequenos/médios e evite anexos muito grandes.
 
+- No menu lateral, em **Admin (MVP)**, existe o botão **Limpar base inteira** para zerar dados (requisições, orçamentos, anexos e aprovações) com dupla confirmação.
+
 ---
 
 ## ✅ Passo a passo manual (guia rápido)
