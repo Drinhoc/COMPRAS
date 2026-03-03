@@ -310,18 +310,18 @@ def render_requisicao_form(prefix: str, data: dict | None = None) -> dict:
         "empresa": empresa_final,
         "setor": setor_final,
         "projeto": projeto_final,
-        "requisicao": requisicao.strip(),
+        "requisicao": (requisicao or "").strip(),
         "data_solicitacao": data_solicitacao.isoformat() if isinstance(data_solicitacao, date) else None,
         "data_compra": None if sem_data_compra else data_compra.isoformat(),
-        "fornecedor": fornecedor.strip(),
+        "fornecedor": (fornecedor or "").strip(),
         "qtde": qtde,
-        "item": item.strip(),
-        "entrega": entrega.strip(),
+        "item": (item or "").strip(),
+        "entrega": (entrega or "").strip(),
         "situacao": situacao,
         "valor": excel_io.parse_decimal(valor),
         "valor_desconto": excel_io.parse_decimal(valor_desconto),
-        "nf": nf.strip(),
-        "observacao": observacao.strip(),
+        "nf": (nf or "").strip(),
+        "observacao": (observacao or "").strip(),
     }
 
 
@@ -343,19 +343,22 @@ def open_requisicao_dialog(selected_req_id: int) -> None:
     )
 
     with tab_dados:
-        with st.form(f"edit_req_dialog_{selected_req_id}"):
-            payload = render_requisicao_form(f"edit_{selected_req_id}", req_data)
-            submitted_edit = st.form_submit_button("Salvar dados da requisição", use_container_width=True)
-            if submitted_edit:
-                errors = validate_payload(payload)
-                if errors:
-                    for err in errors:
-                        st.error(err)
-                else:
-                    crud.update_requisicao(selected_req_id, payload)
-                    st.session_state.pop("selected_req_id", None)
-                    st.toast("Requisição atualizada com sucesso.", icon="✅")
-                    st.rerun()
+        payload = render_requisicao_form(f"edit_{selected_req_id}", req_data)
+        if st.button(
+            "💾 Salvar dados da requisição",
+            key=f"save_edit_{selected_req_id}",
+            use_container_width=True,
+            type="primary",
+        ):
+            errors = validate_payload(payload)
+            if errors:
+                for err in errors:
+                    st.error(err)
+            else:
+                crud.update_requisicao(selected_req_id, payload)
+                st.session_state.pop("selected_req_id", None)
+                st.toast("Requisição atualizada com sucesso.", icon="✅")
+                st.rerun()
 
         st.markdown("---")
         if st.button(
@@ -678,20 +681,7 @@ with aba_requisicoes:
         selected_id = resolve_selected_req_id(selected_rows)
         if selected_id is not None:
             st.session_state.selected_req_id = selected_id
-
-        btn_cols = st.columns([2, 1])
-        with btn_cols[0]:
-            if st.session_state.get("selected_req_id"):
-                st.caption(f"Selecionado: ID {st.session_state['selected_req_id']}")
-            else:
-                st.caption("Clique no botão 📝 da linha para selecionar e abrir os detalhes.")
-        with btn_cols[1]:
-            if st.button(
-                "👁️ Abrir detalhes",
-                use_container_width=True,
-                disabled=not bool(st.session_state.get("selected_req_id")),
-            ):
-                st.session_state.open_req_dialog = True
+            st.session_state.open_req_dialog = True
 
         if st.session_state.get("open_req_dialog") and st.session_state.get("selected_req_id") is not None:
             st.session_state.open_req_dialog = False
