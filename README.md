@@ -96,12 +96,12 @@ As métricas respeitam os filtros da sidebar:
 - O arquivo é baixado direto no navegador.
 
 ## ✅ Fluxo de UX atualizado (edição rápida + gestão detalhada)
-- A aba **Requisições** começa com uma grade de **edição rápida** (inline), com botão único para salvar alterações em lote.
+- A aba **Requisições** começa com **➕ Criar Nova Requisição** em expander no topo, seguido da grade de edição rápida (inline).
 - O Dashboard traz KPIs executivos: total gasto, total em aberto, quantidade de pendentes e percentual de economia.
 - No formulário de requisição, é possível **selecionar projeto existente** ou **criar novo projeto** na hora.
 - Campos de **Empresa** e **Setor** usam seleção de valores existentes com opção de novo cadastro, reduzindo erros de digitação.
-- Abaixo, há uma visão **mestre-detalhe** mais limpa: lista de requisições à esquerda e painel de gestão à direita.
-- O painel detalhado usa seções com **expanders** (Resumo+Edição, Aprovação, Orçamentos, Anexos e Histórico) para reduzir cliques e manter contexto.
+- A visualização principal segue padrão **master-detail**: tabela no corpo principal e detalhe da requisição na **sidebar**.
+- A sidebar usa abas (**📝 Dados**, **✅ Aprovação**, **📁 Arquivos**) para editar dados, aprovar, gerenciar orçamentos e anexos sem poluir o corpo da tela.
 - A aba **Projetos** consolida as requisições e orçamentos de cada projeto para gestão macro.
 - Inclui opção de foco rápido em pendentes (`Solicitado`) sem abrir uma aba separada.
 
