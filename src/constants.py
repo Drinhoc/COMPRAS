@@ -7,6 +7,7 @@ STATUS_LIST = ["Solicitado", "Comprado", "Entregue", "Cancelado"]
 COLUMN_MAP = {
     "empresa": "empresa",
     "setor": "setor",
+    "projeto": "projeto",
     "requisicao": "requisicao",
     "req": "requisicao",
     "data_solicitacao": "data_solicitacao",
@@ -33,6 +34,7 @@ COLUMN_MAP = {
 COLUMN_ORDER = [
     "empresa",
     "setor",
+    "projeto",
     "requisicao",
     "data_solicitacao",
     "data_compra",
@@ -50,6 +52,7 @@ COLUMN_ORDER = [
 DISPLAY_NAMES = {
     "empresa": "Empresa",
     "setor": "Setor",
+    "projeto": "Projeto",
     "requisicao": "Requisição",
     "data_solicitacao": "Data Solicitação",
     "data_compra": "Data Compra",

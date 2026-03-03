@@ -6,6 +6,7 @@ Aplicação Streamlit simples para substituir planilhas de requisições de comp
 - Sem autenticação nesta fase de MVP (acesso direto temporário).
 - Importação inicial de Excel com normalização de cabeçalhos, datas e valores.
 - CRUD completo (criar, editar, visualizar, filtrar).
+- Requisições agrupadas por **Projeto**, com visão consolidada de itens e orçamentos por projeto.
 - Métricas (total gasto, total por empresa e por fornecedor).
 - Exportação para Excel com filtros aplicados.
 - Banco local por padrão (SQLite) e **Postgres via Railway** quando `DATABASE_URL` estiver configurado.
@@ -96,8 +97,10 @@ As métricas respeitam os filtros da sidebar:
 
 ## ✅ Fluxo de UX atualizado (edição rápida + gestão detalhada)
 - A aba **Requisições** começa com uma grade de **edição rápida** (inline), com botão único para salvar alterações em lote.
+- No formulário de requisição, é possível **selecionar projeto existente** ou **criar novo projeto** na hora.
 - Abaixo, há uma visão **mestre-detalhe** mais limpa: lista de requisições à esquerda e painel de gestão à direita.
 - O painel da requisição selecionada usa navegação horizontal: **Resumo**, **Orçamentos**, **Anexos**, **Aprovação** e **Histórico**.
+- A aba **Projetos** consolida as requisições e orçamentos de cada projeto para gestão macro.
 - Inclui opção de foco rápido em pendentes (`Solicitado`) sem abrir uma aba separada.
 
 > Observação: os anexos ficam salvos no próprio banco (BLOB). Para manter boa performance no MVP, use arquivos pequenos/médios e evite anexos muito grandes.

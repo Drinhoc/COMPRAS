@@ -27,6 +27,7 @@ def build_filters(filters: dict[str, Any]) -> tuple[str, dict[str, Any]]:
 
     add_in("UPPER(TRIM(empresa))", filters.get("empresa"), "empresa")
     add_in("UPPER(TRIM(setor))", filters.get("setor"), "setor")
+    add_in("UPPER(TRIM(projeto))", filters.get("projeto"), "projeto")
     add_in("UPPER(TRIM(fornecedor))", filters.get("fornecedor"), "fornecedor")
     add_in("UPPER(TRIM(situacao))", filters.get("situacao"), "situacao")
 
@@ -217,3 +218,32 @@ def delete_all_data() -> None:
                     "WHERE name IN ('requisicoes', 'orcamentos', 'anexos', 'aprovacoes')"
                 )
             )
+
+
+def list_projetos() -> list[str]:
+    return fetch_distinct("projeto")
+
+
+def fetch_requisicoes_por_projeto(projeto: str) -> list[dict[str, Any]]:
+    query = "SELECT * FROM requisicoes WHERE UPPER(TRIM(projeto)) = :projeto ORDER BY id DESC"
+    with ENGINE.connect() as conn:
+        cursor = conn.execute(text(query), {"projeto": normalize_filter_value(projeto)})
+        return [dict(row._mapping) for row in cursor.fetchall()]
+
+
+def fetch_orcamentos_por_projeto(projeto: str) -> list[dict[str, Any]]:
+    query = """
+        SELECT
+            o.*,
+            r.projeto,
+            r.item,
+            r.empresa,
+            r.requisicao
+        FROM orcamentos o
+        JOIN requisicoes r ON r.id = o.requisicao_id
+        WHERE UPPER(TRIM(r.projeto)) = :projeto
+        ORDER BY o.id DESC
+    """
+    with ENGINE.connect() as conn:
+        cursor = conn.execute(text(query), {"projeto": normalize_filter_value(projeto)})
+        return [dict(row._mapping) for row in cursor.fetchall()]

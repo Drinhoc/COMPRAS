@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from typing import Iterable
 
-from sqlalchemy import Column, Float, Integer, LargeBinary, MetaData, String, Table, create_engine, text
+from sqlalchemy import Column, Float, Integer, LargeBinary, MetaData, String, Table, create_engine, inspect, text
 
 from .constants import COLUMN_ORDER
 
@@ -20,6 +20,7 @@ requisicoes = Table(
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("empresa", String, nullable=False),
     Column("setor", String),
+    Column("projeto", String),
     Column("requisicao", String),
     Column("data_solicitacao", String, nullable=False),
     Column("data_compra", String),
@@ -103,6 +104,15 @@ ENGINE = get_engine()
 
 def init_db() -> None:
     metadata.create_all(ENGINE)
+
+    inspector = inspect(ENGINE)
+    if not inspector.has_table("requisicoes"):
+        return
+
+    columns = {col["name"] for col in inspector.get_columns("requisicoes")}
+    if "projeto" not in columns:
+        with ENGINE.begin() as conn:
+            conn.execute(text("ALTER TABLE requisicoes ADD COLUMN projeto VARCHAR"))
 
 
 def insert_many(rows: Iterable[dict]) -> int:

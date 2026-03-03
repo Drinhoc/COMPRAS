@@ -51,12 +51,14 @@ def render_filters() -> dict:
 
     empresas = crud.fetch_distinct("empresa")
     setores = crud.fetch_distinct("setor")
+    projetos = crud.fetch_distinct("projeto")
     fornecedores = crud.fetch_distinct("fornecedor")
     situacoes = STATUS_LIST
 
     with st.sidebar.expander("Filtros avançados", expanded=False):
         empresa = st.multiselect("Empresa", empresas, key="f_empresa")
         setor = st.multiselect("Setor", setores, key="f_setor")
+        projeto = st.multiselect("Projeto", projetos, key="f_projeto")
         fornecedor = st.multiselect("Fornecedor", fornecedores, key="f_fornecedor")
         situacao = st.multiselect("Situação", situacoes, key="f_situacao")
         data_sol = st.date_input("Período Data Solicitação", value=(), key="f_data_solicitacao")
@@ -68,6 +70,7 @@ def render_filters() -> dict:
     filters = {
         "empresa": empresa,
         "setor": setor,
+        "projeto": projeto,
         "fornecedor": fornecedor,
         "situacao": situacoes_aplicadas,
         "texto": texto.strip() or None,
@@ -106,6 +109,12 @@ with st.sidebar.expander("Admin (MVP)", expanded=False):
 
 def render_requisicao_form(prefix: str, data: dict | None = None) -> dict:
     data = data or {}
+    projetos_existentes = crud.list_projetos()
+    projeto_padrao = str(data.get("projeto") or "").strip().upper()
+
+    projeto_opcoes = ["(Sem projeto)"] + projetos_existentes + ["+ Novo projeto"]
+    default_opcao = projeto_padrao if projeto_padrao in projetos_existentes else ("+ Novo projeto" if projeto_padrao else "(Sem projeto)")
+
     col1, col2, col3 = st.columns(3)
     with col1:
         empresa = st.text_input("Empresa*", value=data.get("empresa", ""), key=f"{prefix}_empresa")
@@ -117,6 +126,16 @@ def render_requisicao_form(prefix: str, data: dict | None = None) -> dict:
             key=f"{prefix}_data_solicitacao",
         )
     with col2:
+        projeto_escolhido = st.selectbox(
+            "Projeto",
+            options=projeto_opcoes,
+            index=projeto_opcoes.index(default_opcao),
+            key=f"{prefix}_projeto_sel",
+            help="Selecione um projeto existente ou crie um novo.",
+        )
+        projeto_novo_default = projeto_padrao if default_opcao == "+ Novo projeto" else ""
+        projeto_novo = st.text_input("Novo projeto", value=projeto_novo_default, key=f"{prefix}_projeto_novo")
+
         sem_data_compra = st.checkbox(
             "Sem Data Compra",
             value=data.get("data_compra") in (None, ""),
@@ -129,6 +148,7 @@ def render_requisicao_form(prefix: str, data: dict | None = None) -> dict:
             disabled=sem_data_compra,
         )
         fornecedor = st.text_input("Fornecedor", value=data.get("fornecedor", ""), key=f"{prefix}_fornecedor")
+    with col3:
         qtde = st.number_input(
             "Qtde",
             min_value=0,
@@ -137,7 +157,6 @@ def render_requisicao_form(prefix: str, data: dict | None = None) -> dict:
             key=f"{prefix}_qtde",
         )
         item = st.text_input("Item*", value=data.get("item", ""), key=f"{prefix}_item")
-    with col3:
         entrega = st.text_input("Entrega", value=data.get("entrega", ""), key=f"{prefix}_entrega")
         situacao = st.selectbox(
             "Situação",
@@ -154,9 +173,17 @@ def render_requisicao_form(prefix: str, data: dict | None = None) -> dict:
         nf = st.text_input("NF", value=data.get("nf", ""), key=f"{prefix}_nf")
         observacao = st.text_area("Observação", value=data.get("observacao", ""), key=f"{prefix}_observacao")
 
+    if projeto_escolhido == "+ Novo projeto":
+        projeto_final = projeto_novo.strip().upper()
+    elif projeto_escolhido == "(Sem projeto)":
+        projeto_final = ""
+    else:
+        projeto_final = projeto_escolhido.strip().upper()
+
     return {
         "empresa": empresa.strip(),
         "setor": setor.strip(),
+        "projeto": projeto_final,
         "requisicao": requisicao.strip(),
         "data_solicitacao": data_solicitacao.isoformat() if isinstance(data_solicitacao, date) else None,
         "data_compra": None if sem_data_compra else data_compra.isoformat(),
@@ -224,6 +251,7 @@ def build_payload_from_row(row: pd.Series, original: pd.Series) -> dict:
         {
             "empresa": excel_io.normalize_text(row.get("empresa")),
             "setor": excel_io.normalize_text(row.get("setor")),
+            "projeto": excel_io.normalize_text(row.get("projeto")),
             "requisicao": str(row.get("requisicao") or "").strip(),
             "data_solicitacao": excel_io.parse_date(row.get("data_solicitacao")),
             "data_compra": excel_io.parse_date(row.get("data_compra")),
@@ -263,9 +291,10 @@ def resolve_selected_req_id(selected_rows: object, fallback_id: int) -> int:
     return fallback_id
 
 
-aba_dashboard, aba_requisicoes, aba_importar = st.tabs([
+aba_dashboard, aba_requisicoes, aba_projetos, aba_importar = st.tabs([
     "Dashboard",
     "Requisições",
+    "Projetos",
     "Importar",
 ])
 
@@ -326,6 +355,7 @@ with aba_requisicoes:
         gb_edit.configure_default_column(editable=True, filter=True, sortable=True, resizable=True)
         gb_edit.configure_column("id", editable=False, width=80)
         gb_edit.configure_column("situacao", cellEditor="agSelectCellEditor", cellEditorParams={"values": STATUS_LIST})
+        gb_edit.configure_column("projeto", width=180)
         gb_edit.configure_column("item", width=280)
         gb_edit.configure_column("observacao", width=240)
         gb_edit.configure_column("valor", type=["numericColumn"])
@@ -374,10 +404,11 @@ with aba_requisicoes:
         left_col, right_col = st.columns([1.15, 1.85])
 
         with left_col:
-            lista_df = df_edit[["id", "empresa", "item", "situacao", "fornecedor", "data_solicitacao"]].copy()
+            lista_df = df_edit[["id", "projeto", "empresa", "item", "situacao", "fornecedor", "data_solicitacao"]].copy()
             gb_list = GridOptionsBuilder.from_dataframe(lista_df)
             gb_list.configure_default_column(editable=False, filter=True, sortable=True, resizable=True)
             gb_list.configure_column("id", width=80)
+            gb_list.configure_column("projeto", width=150)
             gb_list.configure_column("item", width=240)
             gb_list.configure_selection("single", use_checkbox=False)
             gb_list.configure_grid_options(suppressRowClickSelection=False, rowSelection="single")
@@ -594,6 +625,30 @@ with aba_requisicoes:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key="download_requisicoes",
         )
+
+
+with aba_projetos:
+    st.subheader("Projetos")
+    projetos = crud.list_projetos()
+    if not projetos:
+        st.info("Nenhum projeto cadastrado ainda. Ao criar uma requisição, selecione ou informe um projeto.")
+    else:
+        projeto_sel = st.selectbox("Selecione o projeto", options=projetos, key="projeto_sel_tab")
+
+        reqs_projeto = crud.fetch_requisicoes_por_projeto(projeto_sel)
+        orcs_projeto = crud.fetch_orcamentos_por_projeto(projeto_sel)
+
+        c1, c2 = st.columns(2)
+        with c1:
+            st.metric("Requisições no projeto", len(reqs_projeto))
+        with c2:
+            st.metric("Orçamentos no projeto", len(orcs_projeto))
+
+        st.markdown("#### Itens/requisições do projeto")
+        st.dataframe(pd.DataFrame(reqs_projeto), use_container_width=True)
+
+        st.markdown("#### Orçamentos consolidados do projeto")
+        st.dataframe(pd.DataFrame(orcs_projeto), use_container_width=True)
 
 with aba_importar:
     st.subheader("Importar Excel")
