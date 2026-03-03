@@ -682,6 +682,7 @@ with aba_dashboard:
         st.markdown("**Total por Empresa**")
         df_emp = metrics.total_por_empresa(df_metrics)
         if not df_emp.empty:
+            df_emp = df_emp.sort_values("total", ascending=False)
             df_emp.columns = ["Empresa", "Total (R$)"]
             df_emp["Total (R$)"] = df_emp["Total (R$)"].apply(format_currency)
         st.dataframe(df_emp, use_container_width=True, hide_index=True)
@@ -689,6 +690,7 @@ with aba_dashboard:
         st.markdown("**Total por Fornecedor**")
         df_forn_tab = metrics.total_por_fornecedor(df_metrics)
         if not df_forn_tab.empty:
+            df_forn_tab = df_forn_tab.sort_values("total", ascending=False)
             df_forn_tab.columns = ["Fornecedor", "Total (R$)"]
             df_forn_tab["Total (R$)"] = df_forn_tab["Total (R$)"].apply(format_currency)
         st.dataframe(df_forn_tab, use_container_width=True, hide_index=True)
