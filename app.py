@@ -594,11 +594,11 @@ with aba_requisicoes:
         if st.button("🔃 Atualizar tabela", use_container_width=True):
             st.rerun()
     with col_actions2:
-        somente_pendentes = st.checkbox("Mostrar somente pendentes (Solicitado)", value=False)
+        ocultar_concluidos = st.checkbox("Ocultar Concluídos e Cancelados", value=False)
 
     req_filters = dict(filters)
-    if somente_pendentes:
-        req_filters["situacao"] = ["Solicitado"]
+    if ocultar_concluidos:
+        req_filters["situacao"] = ["Solicitado", "Cotação", "Aprovação", "Comprado"]
 
     total_registros = crud.count_requisicoes(req_filters)
     page_size = st.selectbox("Registros por página", [10, 20, 50], index=1)
