@@ -318,6 +318,104 @@ with aba_requisicoes:
             with col_cancel:
                 if st.button("Cancelar"):
                     st.session_state.pop("delete_id_pending", None)
+
+        st.markdown("### Aprovação, Orçamentos e Anexos")
+        selected_req_id = st.selectbox("Requisição para gestão", df_edit["id"].tolist(), key="gestao_req")
+        req_tabs = st.tabs(["Orçamentos", "Anexos", "Aprovação"])
+
+        with req_tabs[0]:
+            st.caption("Cadastre e compare orçamentos da requisição selecionada.")
+            orcs = crud.list_orcamentos(int(selected_req_id))
+            st.dataframe(pd.DataFrame(orcs), use_container_width=True)
+            with st.form("form_orcamento"):
+                c1, c2 = st.columns(2)
+                fornecedor_orc = c1.text_input("Fornecedor")
+                valor_orc = c1.text_input("Valor")
+                prazo_orc = c2.date_input("Prazo Entrega", value=None)
+                cond_orc = c2.text_input("Condições de Pagamento")
+                status_orc = st.selectbox("Status orçamento", ["RECEBIDO", "APROVADO", "REJEITADO"])
+                obs_orc = st.text_area("Observação orçamento")
+                if st.form_submit_button("Adicionar orçamento"):
+                    crud.create_orcamento(
+                        {
+                            "requisicao_id": int(selected_req_id),
+                            "fornecedor": excel_io.normalize_text(fornecedor_orc),
+                            "valor": excel_io.parse_decimal(valor_orc),
+                            "prazo_entrega": prazo_orc.isoformat() if prazo_orc else None,
+                            "condicoes_pagamento": cond_orc.strip(),
+                            "status_orcamento": status_orc,
+                            "observacao": obs_orc.strip(),
+                        }
+                    )
+                    st.success("Orçamento adicionado.")
+                    st.experimental_rerun()
+            if orcs:
+                del_orc = st.selectbox("Excluir orçamento (ID)", [o["id"] for o in orcs], key="del_orc")
+                if st.button("Excluir orçamento"):
+                    crud.delete_orcamento(int(del_orc))
+                    st.success("Orçamento excluído.")
+                    st.experimental_rerun()
+
+        with req_tabs[1]:
+            st.caption("Anexos ficam no próprio banco (BLOB) por enquanto.")
+            anexos = crud.list_anexos(int(selected_req_id))
+            st.dataframe(pd.DataFrame(anexos), use_container_width=True)
+            up = st.file_uploader("Enviar anexo", key=f"anexo_{selected_req_id}")
+            tipo_anexo = st.selectbox("Tipo", ["orcamento", "nf", "contrato", "outros"], key=f"tipo_{selected_req_id}")
+            if st.button("Salvar anexo", key=f"btn_save_anexo_{selected_req_id}") and up is not None:
+                crud.create_anexo(
+                    {
+                        "requisicao_id": int(selected_req_id),
+                        "orcamento_id": None,
+                        "tipo": tipo_anexo,
+                        "nome_arquivo": up.name,
+                        "mime_type": up.type,
+                        "conteudo": up.getvalue(),
+                        "uploaded_by": "gestor",
+                    }
+                )
+                st.success("Anexo salvo no banco.")
+                st.experimental_rerun()
+            if anexos:
+                anexo_id = st.selectbox("Baixar/Excluir anexo (ID)", [a["id"] for a in anexos], key=f"anexo_ops_{selected_req_id}")
+                anexo = crud.get_anexo_conteudo(int(anexo_id))
+                if anexo:
+                    st.download_button(
+                        "Baixar anexo",
+                        data=anexo["conteudo"],
+                        file_name=anexo["nome_arquivo"],
+                        mime=anexo.get("mime_type") or "application/octet-stream",
+                        key=f"dl_{selected_req_id}_{anexo_id}",
+                    )
+                if st.button("Excluir anexo", key=f"del_anexo_{selected_req_id}"):
+                    crud.delete_anexo(int(anexo_id))
+                    st.success("Anexo excluído.")
+                    st.experimental_rerun()
+
+        with req_tabs[2]:
+            st.caption("Registre aprovações/reprovações e comentários do gestor.")
+            aps = crud.list_aprovacoes(int(selected_req_id))
+            st.dataframe(pd.DataFrame(aps), use_container_width=True)
+            c1, c2 = st.columns(2)
+            acao = c1.selectbox("Ação", ["APROVADO", "REPROVADO", "DEVOLVIDO", "COMENTÁRIO"], key=f"acao_{selected_req_id}")
+            aprovador = c2.text_input("Aprovador", value="GESTOR", key=f"apr_{selected_req_id}")
+            comentario = st.text_area("Comentário", key=f"obs_apr_{selected_req_id}")
+            if st.button("Registrar ação", key=f"btn_apr_{selected_req_id}"):
+                crud.create_aprovacao(
+                    {
+                        "requisicao_id": int(selected_req_id),
+                        "acao": acao,
+                        "comentario": comentario.strip(),
+                        "aprovador": aprovador.strip() or "GESTOR",
+                    }
+                )
+                if acao == "APROVADO":
+                    req_data = crud.get_by_id(int(selected_req_id))
+                    if req_data:
+                        req_data["situacao"] = "COMPRADO"
+                        crud.update_requisicao(int(selected_req_id), req_data)
+                st.success("Ação registrada.")
+                st.experimental_rerun()
     else:
         st.info("Nenhum registro encontrado com os filtros atuais.")
 

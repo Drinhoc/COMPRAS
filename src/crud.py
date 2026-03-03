@@ -111,3 +111,88 @@ def create_requisicao(data: dict[str, Any]) -> None:
 def delete_requisicao(requisicao_id: int) -> None:
     with ENGINE.begin() as conn:
         conn.execute(text("DELETE FROM requisicoes WHERE id = :id"), {"id": requisicao_id})
+
+
+# --- Orçamentos ---
+def list_orcamentos(requisicao_id: int) -> list[dict[str, Any]]:
+    query = "SELECT * FROM orcamentos WHERE requisicao_id = :rid ORDER BY id DESC"
+    with ENGINE.connect() as conn:
+        cursor = conn.execute(text(query), {"rid": requisicao_id})
+        return [dict(r._mapping) for r in cursor.fetchall()]
+
+
+def create_orcamento(data: dict[str, Any]) -> None:
+    query = text(
+        """
+        INSERT INTO orcamentos (
+            requisicao_id, fornecedor, valor, prazo_entrega,
+            condicoes_pagamento, status_orcamento, observacao
+        ) VALUES (
+            :requisicao_id, :fornecedor, :valor, :prazo_entrega,
+            :condicoes_pagamento, :status_orcamento, :observacao
+        )
+        """
+    )
+    with ENGINE.begin() as conn:
+        conn.execute(query, data)
+
+
+def delete_orcamento(orcamento_id: int) -> None:
+    with ENGINE.begin() as conn:
+        conn.execute(text("DELETE FROM orcamentos WHERE id = :id"), {"id": orcamento_id})
+
+
+# --- Anexos (BLOB) ---
+def list_anexos(requisicao_id: int) -> list[dict[str, Any]]:
+    query = """
+        SELECT id, requisicao_id, orcamento_id, tipo, nome_arquivo, mime_type, uploaded_at, uploaded_by
+        FROM anexos WHERE requisicao_id = :rid ORDER BY id DESC
+    """
+    with ENGINE.connect() as conn:
+        cursor = conn.execute(text(query), {"rid": requisicao_id})
+        return [dict(r._mapping) for r in cursor.fetchall()]
+
+
+def create_anexo(data: dict[str, Any]) -> None:
+    query = text(
+        """
+        INSERT INTO anexos (
+            requisicao_id, orcamento_id, tipo, nome_arquivo, mime_type, conteudo, uploaded_by
+        ) VALUES (
+            :requisicao_id, :orcamento_id, :tipo, :nome_arquivo, :mime_type, :conteudo, :uploaded_by
+        )
+        """
+    )
+    with ENGINE.begin() as conn:
+        conn.execute(query, data)
+
+
+def get_anexo_conteudo(anexo_id: int) -> dict[str, Any] | None:
+    query = "SELECT id, nome_arquivo, mime_type, conteudo FROM anexos WHERE id = :id"
+    with ENGINE.connect() as conn:
+        row = conn.execute(text(query), {"id": anexo_id}).fetchone()
+        return dict(row._mapping) if row else None
+
+
+def delete_anexo(anexo_id: int) -> None:
+    with ENGINE.begin() as conn:
+        conn.execute(text("DELETE FROM anexos WHERE id = :id"), {"id": anexo_id})
+
+
+# --- Aprovações ---
+def list_aprovacoes(requisicao_id: int) -> list[dict[str, Any]]:
+    query = "SELECT * FROM aprovacoes WHERE requisicao_id = :rid ORDER BY id DESC"
+    with ENGINE.connect() as conn:
+        cursor = conn.execute(text(query), {"rid": requisicao_id})
+        return [dict(r._mapping) for r in cursor.fetchall()]
+
+
+def create_aprovacao(data: dict[str, Any]) -> None:
+    query = text(
+        """
+        INSERT INTO aprovacoes (requisicao_id, acao, comentario, aprovador)
+        VALUES (:requisicao_id, :acao, :comentario, :aprovador)
+        """
+    )
+    with ENGINE.begin() as conn:
+        conn.execute(query, data)

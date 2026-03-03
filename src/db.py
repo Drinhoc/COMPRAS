@@ -64,6 +64,55 @@ ENGINE = get_engine()
 
 def init_db() -> None:
     metadata.create_all(ENGINE)
+    with ENGINE.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS orcamentos (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    requisicao_id INTEGER NOT NULL,
+                    fornecedor TEXT,
+                    valor REAL,
+                    prazo_entrega TEXT,
+                    condicoes_pagamento TEXT,
+                    status_orcamento TEXT,
+                    observacao TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS anexos (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    requisicao_id INTEGER NOT NULL,
+                    orcamento_id INTEGER,
+                    tipo TEXT,
+                    nome_arquivo TEXT NOT NULL,
+                    mime_type TEXT,
+                    conteudo BLOB NOT NULL,
+                    uploaded_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    uploaded_by TEXT
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS aprovacoes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    requisicao_id INTEGER NOT NULL,
+                    acao TEXT NOT NULL,
+                    comentario TEXT,
+                    aprovador TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
 
 
 def insert_many(rows: Iterable[dict]) -> int:

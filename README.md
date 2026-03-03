@@ -94,6 +94,14 @@ As métricas respeitam os filtros da sidebar:
 - Exporta apenas os registros filtrados.
 - O arquivo é baixado direto no navegador.
 
+## ✅ Aprovação, Orçamentos e Anexos (novo)
+- Na aba **Requisições**, selecione uma requisição em **Aprovação, Orçamentos e Anexos**.
+- Cadastre múltiplos orçamentos por requisição.
+- Anexe arquivos de orçamento/NF/contrato.
+- Registre ações de aprovação com comentário (aprovar, reprovar, devolver, comentário).
+
+> Observação: por enquanto os anexos ficam salvos no próprio banco (BLOB). Funciona para MVP, mas evite arquivos muito grandes.
+
 ---
 
 ## ✅ Passo a passo manual (guia rápido)
