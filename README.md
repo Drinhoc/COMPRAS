@@ -3,7 +3,7 @@
 Aplicação Streamlit simples para substituir planilhas de requisições de compras com importação/exportação de Excel, CRUD e métricas básicas.
 
 ## ✅ Requisitos atendidos
-- PIN de acesso simples (`@Compras`).
+- Sem autenticação nesta fase de MVP (acesso direto temporário).
 - Importação inicial de Excel com normalização de cabeçalhos, datas e valores.
 - CRUD completo (criar, editar, visualizar, filtrar).
 - Métricas (total gasto, total por empresa e por fornecedor).
@@ -48,9 +48,9 @@ streamlit run app.py
 
 Acesse o endereço indicado no terminal.
 
-## 🔐 PIN de acesso
-- PIN fixo: `@Compras`
-- Após autenticação, o acesso permanece válido na `session_state`.
+## 🔓 Acesso
+- Nesta fase de MVP, o app está sem senha/login para agilizar validações.
+- Em etapa posterior será implementado controle de usuários e autenticação.
 
 ## 📤 Importação de Excel
 - Acesse a aba **Importar**.
@@ -109,7 +109,7 @@ As métricas respeitam os filtros da sidebar:
 ## ✅ Passo a passo manual (guia rápido)
 1. Crie o ambiente virtual e instale dependências.
 2. Execute `streamlit run app.py`.
-3. Digite o PIN `@Compras`.
+3. Acesse o app diretamente (sem PIN nesta fase).
 4. Vá na aba **Importar** e carregue a planilha inicial.
 5. Use a aba **Requisições** para editar ou criar novos registros.
 6. Use os filtros na sidebar para segmentar dados.
@@ -161,8 +161,7 @@ As métricas respeitam os filtros da sidebar:
      ```
    - Use essa URL no navegador.
 
-8. **Autentique com o PIN**  
-   - PIN fixo: `@Compras`
+8. **Acesse sem autenticação** (temporário nesta fase).
 
 ---
 
