@@ -109,31 +109,55 @@ with st.sidebar.expander("Admin (MVP)", expanded=False):
 
 def render_requisicao_form(prefix: str, data: dict | None = None) -> dict:
     data = data or {}
+
     projetos_existentes = crud.list_projetos()
+    empresas_existentes = crud.fetch_distinct("empresa")
+    setores_existentes = crud.fetch_distinct("setor")
+
     projeto_padrao = str(data.get("projeto") or "").strip().upper()
+    empresa_padrao = str(data.get("empresa") or "").strip().upper()
+    setor_padrao = str(data.get("setor") or "").strip().upper()
 
     projeto_opcoes = ["(Sem projeto)"] + projetos_existentes + ["+ Novo projeto"]
-    default_opcao = projeto_padrao if projeto_padrao in projetos_existentes else ("+ Novo projeto" if projeto_padrao else "(Sem projeto)")
+    empresa_opcoes = empresas_existentes + ["+ Nova empresa"] if empresas_existentes else ["+ Nova empresa"]
+    setor_opcoes = setores_existentes + ["+ Novo setor"] if setores_existentes else ["+ Novo setor"]
+
+    default_projeto = projeto_padrao if projeto_padrao in projetos_existentes else ("+ Novo projeto" if projeto_padrao else "(Sem projeto)")
+    default_empresa = empresa_padrao if empresa_padrao in empresas_existentes else "+ Nova empresa"
+    default_setor = setor_padrao if setor_padrao in setores_existentes else "+ Novo setor"
 
     col1, col2, col3 = st.columns(3)
     with col1:
-        empresa = st.text_input("Empresa*", value=data.get("empresa", ""), key=f"{prefix}_empresa")
-        setor = st.text_input("Setor", value=data.get("setor", ""), key=f"{prefix}_setor")
+        empresa_sel = st.selectbox("Empresa*", options=empresa_opcoes, index=empresa_opcoes.index(default_empresa), key=f"{prefix}_empresa_sel")
+        empresa_nova = st.text_input(
+            "Nova empresa",
+            value="" if default_empresa != "+ Nova empresa" else empresa_padrao,
+            key=f"{prefix}_empresa_nova",
+        )
+
+        setor_sel = st.selectbox("Setor", options=setor_opcoes, index=setor_opcoes.index(default_setor), key=f"{prefix}_setor_sel")
+        setor_novo = st.text_input(
+            "Novo setor",
+            value="" if default_setor != "+ Novo setor" else setor_padrao,
+            key=f"{prefix}_setor_novo",
+        )
+
         requisicao = st.text_input("Requisição", value=data.get("requisicao", ""), key=f"{prefix}_requisicao")
         data_solicitacao = st.date_input(
             "Data Solicitação*",
             value=parse_date_input(data.get("data_solicitacao")) or date.today(),
             key=f"{prefix}_data_solicitacao",
         )
+
     with col2:
         projeto_escolhido = st.selectbox(
             "Projeto",
             options=projeto_opcoes,
-            index=projeto_opcoes.index(default_opcao),
+            index=projeto_opcoes.index(default_projeto),
             key=f"{prefix}_projeto_sel",
             help="Selecione um projeto existente ou crie um novo.",
         )
-        projeto_novo_default = projeto_padrao if default_opcao == "+ Novo projeto" else ""
+        projeto_novo_default = projeto_padrao if default_projeto == "+ Novo projeto" else ""
         projeto_novo = st.text_input("Novo projeto", value=projeto_novo_default, key=f"{prefix}_projeto_novo")
 
         sem_data_compra = st.checkbox(
@@ -148,14 +172,9 @@ def render_requisicao_form(prefix: str, data: dict | None = None) -> dict:
             disabled=sem_data_compra,
         )
         fornecedor = st.text_input("Fornecedor", value=data.get("fornecedor", ""), key=f"{prefix}_fornecedor")
+
     with col3:
-        qtde = st.number_input(
-            "Qtde",
-            min_value=0,
-            step=1,
-            value=to_int(data.get("qtde")),
-            key=f"{prefix}_qtde",
-        )
+        qtde = st.number_input("Qtde", min_value=0, step=1, value=to_int(data.get("qtde")), key=f"{prefix}_qtde")
         item = st.text_input("Item*", value=data.get("item", ""), key=f"{prefix}_item")
         entrega = st.text_input("Entrega", value=data.get("entrega", ""), key=f"{prefix}_entrega")
         situacao = st.selectbox(
@@ -165,11 +184,7 @@ def render_requisicao_form(prefix: str, data: dict | None = None) -> dict:
             key=f"{prefix}_situacao",
         )
         valor = st.text_input("Valor", value=to_str(data.get("valor")), key=f"{prefix}_valor")
-        valor_desconto = st.text_input(
-            "Valor Desconto",
-            value=to_str(data.get("valor_desconto")),
-            key=f"{prefix}_valor_desconto",
-        )
+        valor_desconto = st.text_input("Valor Desconto", value=to_str(data.get("valor_desconto")), key=f"{prefix}_valor_desconto")
         nf = st.text_input("NF", value=data.get("nf", ""), key=f"{prefix}_nf")
         observacao = st.text_area("Observação", value=data.get("observacao", ""), key=f"{prefix}_observacao")
 
@@ -180,9 +195,12 @@ def render_requisicao_form(prefix: str, data: dict | None = None) -> dict:
     else:
         projeto_final = projeto_escolhido.strip().upper()
 
+    empresa_final = empresa_nova.strip().upper() if empresa_sel == "+ Nova empresa" else empresa_sel.strip().upper()
+    setor_final = setor_novo.strip().upper() if setor_sel == "+ Novo setor" else setor_sel.strip().upper()
+
     return {
-        "empresa": empresa.strip(),
-        "setor": setor.strip(),
+        "empresa": empresa_final,
+        "setor": setor_final,
         "projeto": projeto_final,
         "requisicao": requisicao.strip(),
         "data_solicitacao": data_solicitacao.isoformat() if isinstance(data_solicitacao, date) else None,
@@ -301,8 +319,22 @@ aba_dashboard, aba_requisicoes, aba_projetos, aba_importar = st.tabs([
 with aba_dashboard:
     st.subheader("Métricas")
     df_metrics = metrics.fetch_dataframe(filters)
-    total = metrics.total_gasto(df_metrics)
-    st.metric("Total gasto", format_currency(total))
+
+    total_gasto = metrics.total_gasto(df_metrics)
+    valor_total = (df_metrics.get("valor", pd.Series(dtype=float)).fillna(0)).sum() if not df_metrics.empty else 0.0
+    valor_desconto_total = (df_metrics.get("valor_desconto", pd.Series(dtype=float)).fillna(0)).sum() if not df_metrics.empty else 0.0
+
+    pendentes_mask = df_metrics.get("situacao", pd.Series(dtype=str)).fillna("").str.upper().eq("SOLICITADO") if not df_metrics.empty else pd.Series(dtype=bool)
+    pendentes_df = df_metrics[pendentes_mask] if not df_metrics.empty and not pendentes_mask.empty else pd.DataFrame()
+    total_aberto = ((pendentes_df.get("valor", pd.Series(dtype=float)).fillna(0)) - (pendentes_df.get("valor_desconto", pd.Series(dtype=float)).fillna(0))).sum() if not pendentes_df.empty else 0.0
+    qtd_pendentes = int(len(pendentes_df))
+    saving_pct = (valor_desconto_total / valor_total * 100) if valor_total else 0.0
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Total Gasto (R$)", format_currency(total_gasto))
+    k2.metric("Total em Aberto (R$)", format_currency(float(total_aberto)))
+    k3.metric("Qtd Pedidos Pendentes", str(qtd_pendentes))
+    k4.metric("% Economia (Saving)", f"{saving_pct:.2f}%")
 
     col1, col2 = st.columns(2)
     with col1:
@@ -366,9 +398,9 @@ with aba_requisicoes:
                 """
                 function(params) {
                     const status = (params.data.situacao || '').toString().trim().toUpperCase();
-                    if (status === 'ENTREGUE') return {backgroundColor: '#EAF8E2'};
-                    if (status === 'COMPRADO') return {backgroundColor: '#FFF6D8'};
-                    return {backgroundColor: '#FFEAEA'};
+                    if (status === 'ENTREGUE') return {backgroundColor: '#EAF4EC'};
+                    if (status === 'COMPRADO') return {backgroundColor: '#F9F1DB'};
+                    return {backgroundColor: '#FCEBEC'};
                 }
                 """
             ),
@@ -394,7 +426,7 @@ with aba_requisicoes:
                     crud.update_requisicao(int(row["id"]), payload)
                     changes += 1
             if changes:
-                st.success(f"{changes} requisições atualizadas com sucesso.")
+                st.toast(f"{changes} requisições atualizadas.", icon="✅")
                 st.experimental_rerun()
             else:
                 st.info("Nenhuma alteração detectada.")
@@ -411,7 +443,20 @@ with aba_requisicoes:
             gb_list.configure_column("projeto", width=150)
             gb_list.configure_column("item", width=240)
             gb_list.configure_selection("single", use_checkbox=False)
-            gb_list.configure_grid_options(suppressRowClickSelection=False, rowSelection="single")
+            gb_list.configure_grid_options(
+                suppressRowClickSelection=False,
+                rowSelection="single",
+                getRowStyle=JsCode(
+                    """
+                    function(params) {
+                        const status = (params.data.situacao || '').toString().trim().toUpperCase();
+                        if (status === 'ENTREGUE') return {backgroundColor: '#EAF4EC'};
+                        if (status === 'COMPRADO') return {backgroundColor: '#F9F1DB'};
+                        return {backgroundColor: '#FCEBEC'};
+                    }
+                    """
+                ),
+            )
             grid_list = AgGrid(
                 lista_df,
                 gridOptions=gb_list.build(),
@@ -436,136 +481,138 @@ with aba_requisicoes:
                 st.session_state.selected_req_id = selected_req_id
 
             st.markdown(f"#### Requisição selecionada: #{selected_req_id}")
-            section = st.radio(
-                "Navegação da requisição",
-                ["Resumo", "Orçamentos", "Anexos", "Aprovação", "Histórico"],
-                horizontal=True,
-            )
 
-            if section == "Resumo":
-                resumo_df = pd.DataFrame(
-                    [{"Campo": DISPLAY_NAMES.get(col, col), "Valor": req_data.get(col)} for col in COLUMN_ORDER]
-                )
-                st.dataframe(resumo_df, use_container_width=True, hide_index=True)
-                with st.form(f"edit_req_{selected_req_id}"):
-                    payload = render_requisicao_form(f"edit_{selected_req_id}", req_data)
-                    submitted_edit = st.form_submit_button("Salvar dados da requisição")
-                    if submitted_edit:
-                        errors = validate_payload(payload)
-                        if errors:
-                            for err in errors:
-                                st.error(err)
-                        else:
-                            crud.update_requisicao(selected_req_id, payload)
-                            st.success("Requisição atualizada.")
+            with st.container():
+                resumo_col, aprov_col = st.columns(2)
+                with resumo_col:
+                    with st.expander("Resumo + Edição", expanded=True):
+                        resumo_df = pd.DataFrame(
+                            [{"Campo": DISPLAY_NAMES.get(col, col), "Valor": req_data.get(col)} for col in COLUMN_ORDER]
+                        )
+                        st.dataframe(resumo_df, use_container_width=True, hide_index=True)
+                        with st.form(f"edit_req_{selected_req_id}"):
+                            payload = render_requisicao_form(f"edit_{selected_req_id}", req_data)
+                            submitted_edit = st.form_submit_button("Salvar dados da requisição")
+                            if submitted_edit:
+                                errors = validate_payload(payload)
+                                if errors:
+                                    for err in errors:
+                                        st.error(err)
+                                else:
+                                    crud.update_requisicao(selected_req_id, payload)
+                                    st.toast("Requisição atualizada com sucesso.", icon="✅")
+                                    st.experimental_rerun()
+
+                        if st.button("Excluir requisição selecionada", key=f"btn_del_req_{selected_req_id}"):
+                            st.session_state.delete_id_pending = selected_req_id
+                        if st.session_state.get("delete_id_pending") == selected_req_id:
+                            st.warning(f"Confirma excluir a requisição #{selected_req_id}?")
+                            c_confirm, c_cancel = st.columns(2)
+                            with c_confirm:
+                                if st.button("Confirmar exclusão", key=f"confirm_del_req_{selected_req_id}"):
+                                    crud.delete_requisicao(selected_req_id)
+                                    st.session_state.pop("delete_id_pending", None)
+                                    st.session_state.pop("selected_req_id", None)
+                                    st.toast("Requisição excluída.", icon="🗑️")
+                                    st.experimental_rerun()
+                            with c_cancel:
+                                if st.button("Cancelar", key=f"cancel_del_req_{selected_req_id}"):
+                                    st.session_state.pop("delete_id_pending", None)
+
+                with aprov_col:
+                    with st.expander("Aprovação", expanded=True):
+                        aps = crud.list_aprovacoes(selected_req_id)
+                        st.dataframe(pd.DataFrame(aps), use_container_width=True)
+                        c1, c2 = st.columns(2)
+                        acao = c1.selectbox("Ação", ["APROVADO", "REPROVADO", "DEVOLVIDO", "COMENTÁRIO"], key=f"acao_{selected_req_id}")
+                        aprovador = c2.text_input("Aprovador", value="GESTOR", key=f"apr_{selected_req_id}")
+                        comentario = st.text_area("Comentário", key=f"obs_apr_{selected_req_id}")
+                        if st.button("Registrar ação", key=f"btn_apr_{selected_req_id}"):
+                            crud.create_aprovacao(
+                                {
+                                    "requisicao_id": selected_req_id,
+                                    "acao": acao,
+                                    "comentario": comentario.strip(),
+                                    "aprovador": aprovador.strip() or "GESTOR",
+                                }
+                            )
+                            if acao == "APROVADO" and req_data:
+                                req_data["situacao"] = "Comprado"
+                                crud.update_requisicao(selected_req_id, req_data)
+                            st.toast("Ação de aprovação registrada.", icon="✅")
                             st.experimental_rerun()
 
-                if st.button("Excluir requisição selecionada", key=f"btn_del_req_{selected_req_id}"):
-                    st.session_state.delete_id_pending = selected_req_id
-                if st.session_state.get("delete_id_pending") == selected_req_id:
-                    st.warning(f"Confirma excluir a requisição #{selected_req_id}?")
-                    c_confirm, c_cancel = st.columns(2)
-                    with c_confirm:
-                        if st.button("Confirmar exclusão", key=f"confirm_del_req_{selected_req_id}"):
-                            crud.delete_requisicao(selected_req_id)
-                            st.session_state.pop("delete_id_pending", None)
-                            st.session_state.pop("selected_req_id", None)
-                            st.success("Requisição excluída.")
+            lower_col1, lower_col2 = st.columns(2)
+            with lower_col1:
+                with st.expander("Orçamentos", expanded=True):
+                    orcs = crud.list_orcamentos(selected_req_id)
+                    st.dataframe(pd.DataFrame(orcs), use_container_width=True)
+                    with st.form(f"form_orcamento_{selected_req_id}"):
+                        c1, c2 = st.columns(2)
+                        fornecedor_orc = c1.text_input("Fornecedor")
+                        valor_orc = c1.text_input("Valor")
+                        prazo_orc = c2.date_input("Prazo Entrega", value=None)
+                        cond_orc = c2.text_input("Condições de Pagamento")
+                        status_orc = st.selectbox("Status orçamento", ["RECEBIDO", "APROVADO", "REJEITADO"])
+                        obs_orc = st.text_area("Observação orçamento")
+                        if st.form_submit_button("Adicionar orçamento"):
+                            crud.create_orcamento(
+                                {
+                                    "requisicao_id": selected_req_id,
+                                    "fornecedor": excel_io.normalize_text(fornecedor_orc),
+                                    "valor": excel_io.parse_decimal(valor_orc),
+                                    "prazo_entrega": prazo_orc.isoformat() if prazo_orc else None,
+                                    "condicoes_pagamento": cond_orc.strip(),
+                                    "status_orcamento": status_orc,
+                                    "observacao": obs_orc.strip(),
+                                }
+                            )
+                            st.toast("Orçamento adicionado.", icon="✅")
                             st.experimental_rerun()
-                    with c_cancel:
-                        if st.button("Cancelar", key=f"cancel_del_req_{selected_req_id}"):
-                            st.session_state.pop("delete_id_pending", None)
+                    if orcs:
+                        del_orc = st.selectbox("Excluir orçamento (ID)", [o["id"] for o in orcs], key=f"del_orc_{selected_req_id}")
+                        if st.button("Excluir orçamento", key=f"btn_del_orc_{selected_req_id}"):
+                            crud.delete_orcamento(int(del_orc))
+                            st.toast("Orçamento excluído.", icon="🗑️")
+                            st.experimental_rerun()
 
-            if section == "Orçamentos":
-                orcs = crud.list_orcamentos(selected_req_id)
-                st.dataframe(pd.DataFrame(orcs), use_container_width=True)
-                with st.form(f"form_orcamento_{selected_req_id}"):
-                    c1, c2 = st.columns(2)
-                    fornecedor_orc = c1.text_input("Fornecedor")
-                    valor_orc = c1.text_input("Valor")
-                    prazo_orc = c2.date_input("Prazo Entrega", value=None)
-                    cond_orc = c2.text_input("Condições de Pagamento")
-                    status_orc = st.selectbox("Status orçamento", ["RECEBIDO", "APROVADO", "REJEITADO"])
-                    obs_orc = st.text_area("Observação orçamento")
-                    if st.form_submit_button("Adicionar orçamento"):
-                        crud.create_orcamento(
+            with lower_col2:
+                with st.expander("Anexos", expanded=True):
+                    anexos = crud.list_anexos(selected_req_id)
+                    st.dataframe(pd.DataFrame(anexos), use_container_width=True)
+                    up = st.file_uploader("Enviar anexo", key=f"anexo_{selected_req_id}")
+                    tipo_anexo = st.selectbox("Tipo", ["orcamento", "nf", "contrato", "outros"], key=f"tipo_{selected_req_id}")
+                    if st.button("Salvar anexo", key=f"btn_save_anexo_{selected_req_id}") and up is not None:
+                        crud.create_anexo(
                             {
                                 "requisicao_id": selected_req_id,
-                                "fornecedor": excel_io.normalize_text(fornecedor_orc),
-                                "valor": excel_io.parse_decimal(valor_orc),
-                                "prazo_entrega": prazo_orc.isoformat() if prazo_orc else None,
-                                "condicoes_pagamento": cond_orc.strip(),
-                                "status_orcamento": status_orc,
-                                "observacao": obs_orc.strip(),
+                                "orcamento_id": None,
+                                "tipo": tipo_anexo,
+                                "nome_arquivo": up.name,
+                                "mime_type": up.type,
+                                "conteudo": up.getvalue(),
+                                "uploaded_by": "gestor",
                             }
                         )
-                        st.success("Orçamento adicionado.")
+                        st.toast("Anexo salvo.", icon="✅")
                         st.experimental_rerun()
-                if orcs:
-                    del_orc = st.selectbox("Excluir orçamento (ID)", [o["id"] for o in orcs], key=f"del_orc_{selected_req_id}")
-                    if st.button("Excluir orçamento", key=f"btn_del_orc_{selected_req_id}"):
-                        crud.delete_orcamento(int(del_orc))
-                        st.success("Orçamento excluído.")
-                        st.experimental_rerun()
+                    if anexos:
+                        anexo_id = st.selectbox("Baixar/Excluir anexo (ID)", [a["id"] for a in anexos], key=f"anexo_ops_{selected_req_id}")
+                        anexo = crud.get_anexo_conteudo(int(anexo_id))
+                        if anexo:
+                            st.download_button(
+                                "Baixar anexo",
+                                data=anexo["conteudo"],
+                                file_name=anexo["nome_arquivo"],
+                                mime=anexo.get("mime_type") or "application/octet-stream",
+                                key=f"dl_{selected_req_id}_{anexo_id}",
+                            )
+                        if st.button("Excluir anexo", key=f"del_anexo_{selected_req_id}"):
+                            crud.delete_anexo(int(anexo_id))
+                            st.toast("Anexo excluído.", icon="🗑️")
+                            st.experimental_rerun()
 
-            if section == "Anexos":
-                anexos = crud.list_anexos(selected_req_id)
-                st.dataframe(pd.DataFrame(anexos), use_container_width=True)
-                up = st.file_uploader("Enviar anexo", key=f"anexo_{selected_req_id}")
-                tipo_anexo = st.selectbox("Tipo", ["orcamento", "nf", "contrato", "outros"], key=f"tipo_{selected_req_id}")
-                if st.button("Salvar anexo", key=f"btn_save_anexo_{selected_req_id}") and up is not None:
-                    crud.create_anexo(
-                        {
-                            "requisicao_id": selected_req_id,
-                            "orcamento_id": None,
-                            "tipo": tipo_anexo,
-                            "nome_arquivo": up.name,
-                            "mime_type": up.type,
-                            "conteudo": up.getvalue(),
-                            "uploaded_by": "gestor",
-                        }
-                    )
-                    st.success("Anexo salvo no banco.")
-                    st.experimental_rerun()
-                if anexos:
-                    anexo_id = st.selectbox("Baixar/Excluir anexo (ID)", [a["id"] for a in anexos], key=f"anexo_ops_{selected_req_id}")
-                    anexo = crud.get_anexo_conteudo(int(anexo_id))
-                    if anexo:
-                        st.download_button(
-                            "Baixar anexo",
-                            data=anexo["conteudo"],
-                            file_name=anexo["nome_arquivo"],
-                            mime=anexo.get("mime_type") or "application/octet-stream",
-                            key=f"dl_{selected_req_id}_{anexo_id}",
-                        )
-                    if st.button("Excluir anexo", key=f"del_anexo_{selected_req_id}"):
-                        crud.delete_anexo(int(anexo_id))
-                        st.success("Anexo excluído.")
-                        st.experimental_rerun()
-
-            if section == "Aprovação":
-                aps = crud.list_aprovacoes(selected_req_id)
-                st.dataframe(pd.DataFrame(aps), use_container_width=True)
-                c1, c2 = st.columns(2)
-                acao = c1.selectbox("Ação", ["APROVADO", "REPROVADO", "DEVOLVIDO", "COMENTÁRIO"], key=f"acao_{selected_req_id}")
-                aprovador = c2.text_input("Aprovador", value="GESTOR", key=f"apr_{selected_req_id}")
-                comentario = st.text_area("Comentário", key=f"obs_apr_{selected_req_id}")
-                if st.button("Registrar ação", key=f"btn_apr_{selected_req_id}"):
-                    crud.create_aprovacao(
-                        {
-                            "requisicao_id": selected_req_id,
-                            "acao": acao,
-                            "comentario": comentario.strip(),
-                            "aprovador": aprovador.strip() or "GESTOR",
-                        }
-                    )
-                    if acao == "APROVADO" and req_data:
-                        req_data["situacao"] = "Comprado"
-                        crud.update_requisicao(selected_req_id, req_data)
-                    st.success("Ação registrada.")
-                    st.experimental_rerun()
-
-            if section == "Histórico":
+            with st.expander("Histórico", expanded=True):
                 historico: list[dict] = []
                 for aprov in crud.list_aprovacoes(selected_req_id):
                     historico.append({
@@ -591,12 +638,18 @@ with aba_requisicoes:
                         "Responsável": orc.get("fornecedor"),
                         "Detalhe": f"Valor: {orc.get('valor')}",
                     })
+
                 hist_df = pd.DataFrame(historico)
                 if hist_df.empty:
                     st.info("Sem histórico para esta requisição.")
                 else:
                     hist_df["Data"] = pd.to_datetime(hist_df["Data"], errors="coerce")
-                    st.dataframe(hist_df.sort_values("Data", ascending=False), use_container_width=True, hide_index=True)
+                    hist_df = hist_df.sort_values("Data", ascending=False)
+                    with st.status("Linha do tempo", expanded=True, state="complete"):
+                        for _, h in hist_df.iterrows():
+                            data_fmt = h["Data"].strftime("%d/%m/%Y %H:%M") if pd.notna(h["Data"]) else "Sem data"
+                            st.markdown(f"**{data_fmt}** · {h['Tipo']} · {h['Evento']}")
+                            st.caption(f"Responsável: {h['Responsável']} | {h['Detalhe']}")
 
     else:
         st.info("Nenhum registro encontrado com os filtros atuais.")
@@ -612,7 +665,7 @@ with aba_requisicoes:
                     st.error(err)
             else:
                 crud.create_requisicao(payload)
-                st.success("Requisição criada.")
+                st.toast("Requisição criada com sucesso.", icon="✅")
                 st.experimental_rerun()
 
     if st.button("Exportar Excel", key="export_requisicoes"):
