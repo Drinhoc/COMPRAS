@@ -321,6 +321,140 @@ def resolve_selected_req_id(selected_rows: object, fallback_id: int) -> int:
     return fallback_id
 
 
+@st.dialog("Detalhes da Requisição", width="large")
+def open_requisicao_dialog(selected_req_id: int) -> None:
+    req_data = crud.get_by_id(selected_req_id)
+    if not req_data:
+        st.warning("Requisição não encontrada.")
+        return
+
+    tab_dados, tab_aprov, tab_arquivos = st.tabs(["📝 Dados", "✅ Aprovação", "📁 Arquivos"])
+
+    with tab_dados:
+        c1, c2 = st.columns(2)
+        with c1:
+            resumo_df = pd.DataFrame(
+                [{"Campo": DISPLAY_NAMES.get(col, col), "Valor": req_data.get(col)} for col in COLUMN_ORDER]
+            )
+            st.dataframe(resumo_df, use_container_width=True, hide_index=True)
+
+        with c2:
+            with st.form(f"edit_req_dialog_{selected_req_id}"):
+                payload = render_requisicao_form(f"edit_{selected_req_id}", req_data)
+                submitted_edit = st.form_submit_button("Salvar dados da requisição", use_container_width=True)
+                if submitted_edit:
+                    errors = validate_payload(payload)
+                    if errors:
+                        for err in errors:
+                            st.error(err)
+                    else:
+                        crud.update_requisicao(selected_req_id, payload)
+                        st.session_state.open_req_dialog = False
+                        st.toast("Requisição atualizada com sucesso.", icon="✅")
+                        st.rerun()
+
+            if st.button("Excluir requisição selecionada", key=f"btn_del_req_{selected_req_id}", use_container_width=True):
+                crud.delete_requisicao(selected_req_id)
+                st.session_state.open_req_dialog = False
+                st.session_state.pop("selected_req_id", None)
+                st.toast("Requisição excluída.", icon="🗑️")
+                st.rerun()
+
+        st.markdown("##### Orçamentos")
+        orcs = crud.list_orcamentos(selected_req_id)
+        st.dataframe(pd.DataFrame(orcs), use_container_width=True)
+        with st.form(f"form_orcamento_dialog_{selected_req_id}"):
+            oc1, oc2 = st.columns(2)
+            fornecedor_orc = oc1.text_input("Fornecedor")
+            valor_orc = oc1.text_input("Valor")
+            prazo_orc = oc2.date_input("Prazo Entrega", value=None)
+            cond_orc = oc2.text_input("Condições de Pagamento")
+            status_orc = st.selectbox("Status orçamento", ["RECEBIDO", "APROVADO", "REJEITADO"])
+            obs_orc = st.text_area("Observação orçamento")
+            if st.form_submit_button("Adicionar orçamento", use_container_width=True):
+                crud.create_orcamento(
+                    {
+                        "requisicao_id": selected_req_id,
+                        "fornecedor": excel_io.normalize_text(fornecedor_orc),
+                        "valor": excel_io.parse_decimal(valor_orc),
+                        "prazo_entrega": prazo_orc.isoformat() if prazo_orc else None,
+                        "condicoes_pagamento": cond_orc.strip(),
+                        "status_orcamento": status_orc,
+                        "observacao": obs_orc.strip(),
+                    }
+                )
+                st.session_state.open_req_dialog = False
+                st.toast("Orçamento adicionado.", icon="✅")
+                st.rerun()
+        if orcs:
+            del_orc = st.selectbox("Excluir orçamento (ID)", [o["id"] for o in orcs], key=f"del_orc_{selected_req_id}")
+            if st.button("Excluir orçamento", key=f"btn_del_orc_{selected_req_id}", use_container_width=True):
+                crud.delete_orcamento(int(del_orc))
+                st.session_state.open_req_dialog = False
+                st.toast("Orçamento excluído.", icon="🗑️")
+                st.rerun()
+
+    with tab_aprov:
+        aps = crud.list_aprovacoes(selected_req_id)
+        st.dataframe(pd.DataFrame(aps), use_container_width=True)
+        acao = st.selectbox("Ação", ["APROVADO", "REPROVADO", "DEVOLVIDO", "COMENTÁRIO"], key=f"acao_{selected_req_id}")
+        aprovador = st.text_input("Aprovador", value="GESTOR", key=f"apr_{selected_req_id}")
+        comentario = st.text_area("Comentário", key=f"obs_apr_{selected_req_id}")
+        if st.button("Registrar ação", key=f"btn_apr_{selected_req_id}", use_container_width=True):
+            crud.create_aprovacao(
+                {
+                    "requisicao_id": selected_req_id,
+                    "acao": acao,
+                    "comentario": comentario.strip(),
+                    "aprovador": aprovador.strip() or "GESTOR",
+                }
+            )
+            if acao == "APROVADO" and req_data:
+                req_data["situacao"] = "Comprado"
+                crud.update_requisicao(selected_req_id, req_data)
+            st.session_state.open_req_dialog = False
+            st.toast("Ação de aprovação registrada.", icon="✅")
+            st.rerun()
+
+    with tab_arquivos:
+        anexos = crud.list_anexos(selected_req_id)
+        st.dataframe(pd.DataFrame(anexos), use_container_width=True)
+        up = st.file_uploader("Enviar anexo", key=f"anexo_{selected_req_id}")
+        tipo_anexo = st.selectbox("Tipo", ["orcamento", "nf", "contrato", "outros"], key=f"tipo_{selected_req_id}")
+        if st.button("Salvar anexo", key=f"btn_save_anexo_{selected_req_id}", use_container_width=True) and up is not None:
+            crud.create_anexo(
+                {
+                    "requisicao_id": selected_req_id,
+                    "orcamento_id": None,
+                    "tipo": tipo_anexo,
+                    "nome_arquivo": up.name,
+                    "mime_type": up.type,
+                    "conteudo": up.getvalue(),
+                    "uploaded_by": "gestor",
+                }
+            )
+            st.session_state.open_req_dialog = False
+            st.toast("Anexo salvo.", icon="✅")
+            st.rerun()
+        if anexos:
+            anexo_id = st.selectbox("Baixar/Excluir anexo (ID)", [a["id"] for a in anexos], key=f"anexo_ops_{selected_req_id}")
+            anexo = crud.get_anexo_conteudo(int(anexo_id))
+            if anexo:
+                st.download_button(
+                    "Baixar anexo",
+                    data=anexo["conteudo"],
+                    file_name=anexo["nome_arquivo"],
+                    mime=anexo.get("mime_type") or "application/octet-stream",
+                    key=f"dl_{selected_req_id}_{anexo_id}",
+                    use_container_width=True,
+                )
+            if st.button("Excluir anexo", key=f"del_anexo_{selected_req_id}", use_container_width=True):
+                crud.delete_anexo(int(anexo_id))
+                st.session_state.open_req_dialog = False
+                st.toast("Anexo excluído.", icon="🗑️")
+                st.rerun()
+
+
 aba_dashboard, aba_requisicoes, aba_projetos, aba_importar = st.tabs([
     "Dashboard",
     "Requisições",
@@ -407,12 +541,32 @@ with aba_requisicoes:
 
     if not df_edit.empty:
         editable_df = df_edit.copy()
+        editable_df.insert(0, "acoes", "📝")
         for col in ["data_solicitacao", "data_compra"]:
             if col in editable_df.columns:
                 editable_df[col] = pd.to_datetime(editable_df[col], errors="coerce").dt.date
 
         gb_edit = GridOptionsBuilder.from_dataframe(editable_df)
         gb_edit.configure_default_column(editable=True, filter=True, sortable=True, resizable=True)
+        gb_edit.configure_column("acoes", editable=False, width=70, pinned="left", cellRenderer=JsCode(
+            """
+            class AcaoRenderer {
+                init(params) {
+                    this.eGui = document.createElement('button');
+                    this.eGui.innerHTML = '📝';
+                    this.eGui.style.cursor = 'pointer';
+                    this.eGui.style.border = 'none';
+                    this.eGui.style.background = 'transparent';
+                    this.eGui.style.fontSize = '16px';
+                    this.eGui.addEventListener('click', () => {
+                        params.api.deselectAll();
+                        params.node.setSelected(true);
+                    });
+                }
+                getGui() { return this.eGui; }
+            }
+            """
+        ))
         gb_edit.configure_column("id", editable=False, width=80)
         gb_edit.configure_column("situacao", cellEditor="agSelectCellEditor", cellEditorParams={"values": STATUS_LIST})
         gb_edit.configure_column("projeto", width=180)
@@ -421,6 +575,10 @@ with aba_requisicoes:
         gb_edit.configure_column("valor", type=["numericColumn"])
         gb_edit.configure_column("valor_desconto", type=["numericColumn"])
         gb_edit.configure_grid_options(
+        gb_edit.configure_selection("single", use_checkbox=False)
+        gb_edit.configure_grid_options(
+            suppressRowClickSelection=True,
+            rowSelection="single",
             rowHoverHighlight=True,
             getRowStyle=JsCode(
                 """
@@ -443,6 +601,7 @@ with aba_requisicoes:
             allow_unsafe_jscode=True,
             theme="streamlit",
             key="editor_requisicoes_v3",
+            key="editor_requisicoes_v4",
             height=520,
         )
 
@@ -594,6 +753,16 @@ with aba_requisicoes:
                     crud.delete_anexo(int(anexo_id))
                     st.toast("Anexo excluído.", icon="🗑️")
                     st.rerun()
+        selected_rows = grid_edit.get("selected_rows")
+        if selected_rows is not None:
+            selected_id = resolve_selected_req_id(selected_rows, int(df_edit.iloc[0]["id"]))
+            if selected_id != st.session_state.get("selected_req_id"):
+                st.session_state.selected_req_id = selected_id
+                st.session_state.open_req_dialog = True
+
+        if st.session_state.get("open_req_dialog") and st.session_state.get("selected_req_id"):
+            st.session_state.open_req_dialog = False
+            open_requisicao_dialog(int(st.session_state["selected_req_id"]))
 
     else:
         st.info("Nenhum registro encontrado com os filtros atuais.")
