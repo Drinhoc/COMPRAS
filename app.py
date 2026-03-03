@@ -646,18 +646,32 @@ with aba_requisicoes:
             """
         )
 
+        # Exibe apenas as colunas essenciais; o resto fica no modal
+        _GRID_COLS = ["acoes", "id", "data_solicitacao", "empresa",
+                      "item", "fornecedor", "valor", "situacao"]
         df_grid = df_view.copy()
         df_grid.insert(0, "acoes", "📝")
+        df_grid = df_grid[[c for c in _GRID_COLS if c in df_grid.columns]]
 
         gb = GridOptionsBuilder.from_dataframe(df_grid)
-        gb.configure_default_column(editable=False, filter=True, sortable=True, resizable=True)
-        gb.configure_column("acoes", editable=False, width=70, pinned="left", cellRenderer=action_renderer)
-        gb.configure_column("id", editable=False, width=80)
-        gb.configure_column("projeto", width=180)
-        gb.configure_column("item", width=260)
-        gb.configure_column("observacao", width=220)
-        gb.configure_column("valor", type=["numericColumn"])
-        gb.configure_column("valor_desconto", type=["numericColumn"])
+        gb.configure_default_column(
+            editable=False, filter=True, sortable=True, resizable=True,
+            suppressSizeToFit=False,
+        )
+        gb.configure_column("acoes",            headerName=" ",
+                            editable=False, width=52, pinned="left",
+                            cellRenderer=action_renderer, suppressSizeToFit=True)
+        gb.configure_column("id",               headerName="ID",
+                            editable=False, width=65, suppressSizeToFit=True)
+        gb.configure_column("data_solicitacao", headerName="Dt. Solicitação",
+                            width=130, suppressSizeToFit=True)
+        gb.configure_column("empresa",          headerName="Empresa",   width=150)
+        gb.configure_column("item",             headerName="Item",      width=260)
+        gb.configure_column("fornecedor",       headerName="Fornecedor", width=160)
+        gb.configure_column("valor",            headerName="Valor (R$)",
+                            type=["numericColumn"], width=115)
+        gb.configure_column("situacao",         headerName="Status",
+                            width=115, suppressSizeToFit=True)
         gb.configure_selection("single", use_checkbox=False)
         gb.configure_grid_options(
             suppressRowClickSelection=True,
@@ -670,10 +684,10 @@ with aba_requisicoes:
             df_grid,
             gridOptions=gb.build(),
             update_mode=GridUpdateMode.SELECTION_CHANGED,
-            fit_columns_on_grid_load=True,
+            fit_columns_on_grid_load=False,
             allow_unsafe_jscode=True,
             theme="streamlit",
-            key="viewer_requisicoes_v1",
+            key="viewer_requisicoes_v2",
             height=520,
         )
 
