@@ -2,7 +2,7 @@
 
 PIN_ACESSO = "@Compras"
 
-STATUS_LIST = ["Solicitado", "Comprado", "Entregue", "Cancelado"]
+STATUS_LIST = ["Solicitado", "Cotação", "Aprovação", "Comprado", "Entregue", "Cancelado"]
 
 COLUMN_MAP = {
     "empresa": "empresa",

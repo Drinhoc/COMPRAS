@@ -638,10 +638,13 @@ with aba_requisicoes:
             """
             function(params) {
                 const status = (params.data.situacao || '').toString().trim().toUpperCase();
-                if (status === 'ENTREGUE')  return {backgroundColor: '#D4EDDA', color: '#155724'};
-                if (status === 'COMPRADO')  return {backgroundColor: '#FFF3CD', color: '#856404'};
-                if (status === 'CANCELADO') return {backgroundColor: '#F8D7DA', color: '#721c24'};
-                return {backgroundColor: '#E9ECEF', color: '#343a40'};
+                if (status === 'SOLICITADO') return {backgroundColor: '#FFEBEE', color: '#C62828'};
+                if (status === 'COTA\u00c7\u00c3O')   return {backgroundColor: '#FFF3E0', color: '#BF360C'};
+                if (status === 'APROVA\u00c7\u00c3O') return {backgroundColor: '#FFFDE7', color: '#827717'};
+                if (status === 'COMPRADO')   return {backgroundColor: '#E8F5E9', color: '#2E7D32'};
+                if (status === 'ENTREGUE')   return {backgroundColor: '#A5D6A7', color: '#1B5E20'};
+                if (status === 'CANCELADO')  return {backgroundColor: '#EEEEEE', color: '#757575'};
+                return {backgroundColor: '#FFFFFF', color: '#343a40'};
             }
             """
         )
