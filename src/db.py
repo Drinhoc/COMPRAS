@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from typing import Iterable
 
-from sqlalchemy import Column, Float, Integer, LargeBinary, MetaData, String, Table, create_engine, inspect, text
+from sqlalchemy import Column, Float, Integer, LargeBinary, MetaData, String, Table, create_engine, inspect, text, Date
 
 from .constants import COLUMN_ORDER
 
@@ -74,6 +74,15 @@ aprovacoes = Table(
     Column("created_at", String, server_default=text("CURRENT_TIMESTAMP")),
 )
 
+projetos = Table(
+    "projetos",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("nome", String, nullable=False, unique=True),
+    Column("descricao", String),
+    Column("criado_em", String, server_default=text("CURRENT_TIMESTAMP")),
+)
+
 
 def _normalize_database_url(url: str) -> str:
     if url.startswith("postgres://"):
@@ -113,6 +122,24 @@ def init_db() -> None:
     if "projeto" not in columns:
         with ENGINE.begin() as conn:
             conn.execute(text("ALTER TABLE requisicoes ADD COLUMN projeto VARCHAR"))
+
+    # Popula tabela projetos com nomes já existentes em requisicoes (migração única)
+    with ENGINE.begin() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT DISTINCT UPPER(TRIM(projeto)) AS nome FROM requisicoes "
+                "WHERE projeto IS NOT NULL AND TRIM(projeto) != ''"
+            )
+        ).fetchall()
+        for row in rows:
+            conn.execute(
+                text(
+                    "INSERT INTO projetos (nome) "
+                    "SELECT :nome WHERE NOT EXISTS "
+                    "(SELECT 1 FROM projetos WHERE UPPER(TRIM(nome)) = UPPER(TRIM(:nome)))"
+                ),
+                {"nome": row.nome},
+            )
 
 
 def insert_many(rows: Iterable[dict]) -> int:

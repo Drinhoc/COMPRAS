@@ -1148,26 +1148,129 @@ with aba_analises:
 # ---- Projetos ----
 with aba_projetos:
     st.subheader("Projetos")
-    projetos = crud.list_projetos()
-    if not projetos:
-        st.info("Nenhum projeto cadastrado ainda. Ao criar uma requisição, selecione ou informe um projeto.")
+
+    # ── Criar novo projeto ────────────────────────────────────────────────
+    with st.expander("➕ Criar novo projeto", expanded=False):
+        with st.form("form_criar_projeto", clear_on_submit=True):
+            _pnome = st.text_input("Nome do projeto *", placeholder="Ex: OBRA NORTE 2024")
+            _pdesc = st.text_area("Descrição (opcional)", height=80)
+            if st.form_submit_button("Criar projeto", use_container_width=True):
+                _pnome_clean = _pnome.strip().upper()
+                if not _pnome_clean:
+                    st.error("Nome do projeto é obrigatório.")
+                elif _pnome_clean in [p.upper() for p in crud.list_projetos()]:
+                    st.warning(f"Projeto '{_pnome_clean}' já existe.")
+                else:
+                    crud.create_projeto(_pnome_clean, _pdesc)
+                    st.toast(f"Projeto '{_pnome_clean}' criado.", icon="✅")
+                    st.rerun()
+
+    all_projetos = crud.fetch_all_projetos()
+
+    if not all_projetos:
+        st.info("Nenhum projeto cadastrado. Use o painel acima para criar o primeiro projeto.")
     else:
-        projeto_sel = st.selectbox("Selecione o projeto", options=projetos, key="projeto_sel_tab")
+        # ── Layout: lista à esquerda | detalhe à direita ──────────────────
+        col_lista, col_detalhe = st.columns([1, 2])
 
-        reqs_projeto = crud.fetch_requisicoes_por_projeto(projeto_sel)
-        orcs_projeto = crud.fetch_orcamentos_por_projeto(projeto_sel)
+        with col_lista:
+            st.markdown("**Projetos cadastrados**")
+            _proj_nomes = [p["nome"] for p in all_projetos]
+            projeto_sel_idx = st.radio(
+                "Selecionar",
+                range(len(_proj_nomes)),
+                format_func=lambda i: _proj_nomes[i],
+                label_visibility="collapsed",
+                key="projeto_radio_sel",
+            )
+            projeto_sel_dict = all_projetos[projeto_sel_idx]
 
-        c1, c2 = st.columns(2)
-        with c1:
-            st.metric("Requisições no projeto", len(reqs_projeto))
-        with c2:
-            st.metric("Orçamentos no projeto", len(orcs_projeto))
+        with col_detalhe:
+            _psel_nome = projeto_sel_dict["nome"]
+            _psel_id   = projeto_sel_dict["id"]
+            _psel_desc = projeto_sel_dict.get("descricao") or ""
+            _psel_data = projeto_sel_dict.get("criado_em", "")
 
-        st.markdown("#### Itens/requisições do projeto")
-        st.dataframe(pd.DataFrame(reqs_projeto), use_container_width=True, hide_index=True)
+            reqs_projeto = crud.fetch_requisicoes_por_projeto(_psel_nome)
+            orcs_projeto = crud.fetch_orcamentos_por_projeto(_psel_nome)
 
-        st.markdown("#### Orçamentos consolidados do projeto")
-        st.dataframe(pd.DataFrame(orcs_projeto), use_container_width=True, hide_index=True)
+            df_reqs_p = pd.DataFrame(reqs_projeto)
+
+            # Métricas do projeto
+            _total_val = 0.0
+            _status_counts: dict = {}
+            if not df_reqs_p.empty:
+                _total_val = float(
+                    (df_reqs_p["valor"].fillna(0) - df_reqs_p["valor_desconto"].fillna(0)).sum()
+                )
+                _status_counts = df_reqs_p["situacao"].value_counts().to_dict()
+
+            st.markdown(f"### 📁 {_psel_nome}")
+            if _psel_desc:
+                st.caption(_psel_desc)
+            if _psel_data:
+                st.caption(f"Criado em: {_psel_data[:10]}")
+
+            _pm1, _pm2, _pm3 = st.columns(3)
+            _pm1.metric("Requisições", len(reqs_projeto))
+            _pm2.metric("Orçamentos", len(orcs_projeto))
+            _pm3.metric("Total gasto", format_currency(_total_val))
+
+            # Breakdown de status
+            if _status_counts:
+                _status_str = "  ·  ".join(
+                    f"{st_}: {cnt}" for st_, cnt in sorted(_status_counts.items())
+                )
+                st.caption(f"Status: {_status_str}")
+
+            st.markdown("---")
+
+            # Editar projeto
+            with st.expander("✏️ Editar projeto", expanded=False):
+                with st.form(f"form_editar_projeto_{_psel_id}"):
+                    _edit_nome = st.text_input("Nome", value=_psel_nome)
+                    _edit_desc = st.text_area("Descrição", value=_psel_desc, height=80)
+                    _col_save, _col_del = st.columns(2)
+                    _save = _col_save.form_submit_button("💾 Salvar", use_container_width=True)
+                    _del  = _col_del.form_submit_button(
+                        "🗑️ Excluir projeto", use_container_width=True, type="secondary"
+                    )
+                    if _save:
+                        _edit_nome_clean = _edit_nome.strip().upper()
+                        if not _edit_nome_clean:
+                            st.error("Nome não pode ser vazio.")
+                        else:
+                            crud.update_projeto(_psel_id, _edit_nome_clean, _edit_desc)
+                            st.toast("Projeto atualizado.", icon="✅")
+                            st.rerun()
+                    if _del:
+                        crud.delete_projeto(_psel_id, _psel_nome)
+                        st.toast(f"Projeto '{_psel_nome}' excluído. Requisições desvinculadas.", icon="🗑️")
+                        st.rerun()
+
+            # Tabela de requisições
+            st.markdown("#### Requisições do projeto")
+            if df_reqs_p.empty:
+                st.info("Nenhuma requisição vinculada a este projeto ainda.")
+            else:
+                _display_cols = [c for c in [
+                    "id", "data_solicitacao", "empresa", "item",
+                    "fornecedor", "valor", "situacao",
+                ] if c in df_reqs_p.columns]
+                _df_show = df_reqs_p[_display_cols].copy()
+                for _dc in ["data_solicitacao", "data_compra"]:
+                    if _dc in _df_show.columns:
+                        _df_show[_dc] = pd.to_datetime(_df_show[_dc], errors="coerce").dt.strftime("%d/%m/%Y").fillna("")
+                st.dataframe(_df_show, use_container_width=True, hide_index=True)
+
+            # Tabela de orçamentos
+            st.markdown("#### Orçamentos consolidados")
+            if not orcs_projeto:
+                st.info("Nenhum orçamento registrado para este projeto.")
+            else:
+                _df_orcs = pd.DataFrame(orcs_projeto)
+                _orc_cols = [c for c in ["id", "item", "empresa", "fornecedor", "valor", "status_orcamento", "prazo_entrega"] if c in _df_orcs.columns]
+                st.dataframe(_df_orcs[_orc_cols], use_container_width=True, hide_index=True)
 
 
 # ---- Importar ----
