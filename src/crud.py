@@ -85,6 +85,31 @@ def fetch_distinct(field: str) -> list[str]:
         return [row[0] for row in cursor.fetchall()]
 
 
+def fetch_counts(requisicao_ids: list[int]) -> dict[int, dict[str, int]]:
+    """Retorna {req_id: {'orcamentos': n, 'anexos': n}} para os IDs informados."""
+    result: dict[int, dict[str, int]] = {
+        int(rid): {"orcamentos": 0, "anexos": 0} for rid in requisicao_ids
+    }
+    if not requisicao_ids:
+        return result
+    placeholders = ", ".join(f":id{i}" for i in range(len(requisicao_ids)))
+    params = {f"id{i}": int(rid) for i, rid in enumerate(requisicao_ids)}
+    with ENGINE.connect() as conn:
+        for tabela, chave in (("orcamentos", "orcamentos"), ("anexos", "anexos")):
+            cursor = conn.execute(
+                text(
+                    f"SELECT requisicao_id, COUNT(*) AS n FROM {tabela} "
+                    f"WHERE requisicao_id IN ({placeholders}) GROUP BY requisicao_id"
+                ),
+                params,
+            )
+            for row in cursor.fetchall():
+                rid = int(row._mapping["requisicao_id"])
+                if rid in result:
+                    result[rid][chave] = int(row._mapping["n"])
+    return result
+
+
 def get_by_id(requisicao_id: int) -> dict[str, Any] | None:
     with ENGINE.connect() as conn:
         cursor = conn.execute(text("SELECT * FROM requisicoes WHERE id = :id"), {"id": requisicao_id})

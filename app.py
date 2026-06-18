@@ -402,7 +402,7 @@ def open_requisicao_dialog(selected_req_id: int) -> None:
         st.warning("Requisição não encontrada.")
         return
 
-    st.caption(f"ID {selected_req_id} · {req_data.get('empresa', '')} · {req_data.get('item', '')}")
+    st.caption(f"REQ-{selected_req_id:04d} · {req_data.get('empresa', '')} · {req_data.get('item', '')}")
 
     tab_dados, tab_orc, tab_aprov, tab_arquivos = st.tabs(
         ["📝 Editar Dados", "💰 Orçamentos", "✅ Aprovações", "📁 Anexos"]
@@ -717,18 +717,16 @@ with aba_requisicoes:
     st.subheader("Requisições")
 
     with st.expander("➕ Criar Nova Requisição", expanded=False):
-        with st.form("novo_form"):
-            payload_novo = render_requisicao_form("novo")
-            submitted = st.form_submit_button("Criar requisição", use_container_width=True)
-            if submitted:
-                errors = validate_payload(payload_novo)
-                if errors:
-                    for err in errors:
-                        st.error(err)
-                else:
-                    crud.create_requisicao(payload_novo)
-                    st.toast("Requisição criada com sucesso.", icon="✅")
-                    st.rerun()
+        payload_novo = render_requisicao_form("novo")
+        if st.button("Criar requisição", key="btn_criar_req", use_container_width=True, type="primary"):
+            errors = validate_payload(payload_novo)
+            if errors:
+                for err in errors:
+                    st.error(err)
+            else:
+                crud.create_requisicao(payload_novo)
+                st.toast("Requisição criada com sucesso.", icon="✅")
+                st.rerun()
 
     col_actions1, col_actions2 = st.columns([1, 1])
     with col_actions1:
@@ -764,17 +762,32 @@ with aba_requisicoes:
             class AcaoRenderer {
                 init(params) {
                     this.eGui = document.createElement('button');
-                    this.eGui.innerHTML = '📝';
+                    this.eGui.innerHTML = '🔍 Abrir';
+                    this.eGui.title = 'Abrir detalhes, orçamentos, aprovações e anexos';
                     this.eGui.style.cursor = 'pointer';
-                    this.eGui.style.border = 'none';
-                    this.eGui.style.background = 'transparent';
-                    this.eGui.style.fontSize = '16px';
+                    this.eGui.style.border = '1px solid #4C72B0';
+                    this.eGui.style.borderRadius = '6px';
+                    this.eGui.style.background = '#4C72B0';
+                    this.eGui.style.color = '#fff';
+                    this.eGui.style.fontSize = '12px';
+                    this.eGui.style.fontWeight = '600';
+                    this.eGui.style.padding = '2px 8px';
                     this.eGui.addEventListener('click', () => {
                         params.api.deselectAll();
                         params.node.setSelected(true);
                     });
                 }
                 getGui() { return this.eGui; }
+            }
+            """
+        )
+
+        currency_formatter = JsCode(
+            """
+            function(params) {
+                if (params.value === null || params.value === undefined || params.value === '') return '';
+                return 'R$ ' + Number(params.value).toLocaleString('pt-BR',
+                    {minimumFractionDigits: 2, maximumFractionDigits: 2});
             }
             """
         )
@@ -794,12 +807,22 @@ with aba_requisicoes:
             """
         )
 
+        # Contagem de orçamentos/anexos por requisição (para os badges)
+        _ids = [int(i) for i in df_view["id"].tolist()]
+        _counts = crud.fetch_counts(_ids)
+
         # Exibe apenas as colunas essenciais; o resto fica no modal
-        _GRID_COLS = ["acoes", "id", "data_solicitacao", "empresa",
-                      "item", "fornecedor", "valor", "situacao"]
+        _GRID_COLS = ["acoes", "req", "data_solicitacao", "empresa",
+                      "item", "fornecedor", "valor", "situacao", "anexos_orc"]
         df_grid = df_view.copy()
-        df_grid.insert(0, "acoes", "📝")
-        df_grid = df_grid[[c for c in _GRID_COLS if c in df_grid.columns]]
+        df_grid.insert(0, "acoes", "Abrir")
+        df_grid["req"] = df_grid["id"].apply(lambda i: f"REQ-{int(i):04d}")
+        df_grid["anexos_orc"] = df_grid["id"].apply(
+            lambda i: f"💰 {_counts.get(int(i), {}).get('orcamentos', 0)}  "
+                      f"📎 {_counts.get(int(i), {}).get('anexos', 0)}"
+        )
+        # Mantém 'id' oculto para resolver a seleção/abertura do modal
+        df_grid = df_grid[[c for c in (_GRID_COLS + ["id"]) if c in df_grid.columns]]
 
         gb = GridOptionsBuilder.from_dataframe(df_grid)
         gb.configure_default_column(
@@ -807,17 +830,23 @@ with aba_requisicoes:
             suppressSizeToFit=False,
         )
         gb.configure_column("acoes",            headerName=" ",
-                            editable=False, width=52, pinned="left",
-                            cellRenderer=action_renderer, suppressSizeToFit=True)
-        gb.configure_column("id",               headerName="ID",
-                            editable=False, width=65, suppressSizeToFit=True)
+                            editable=False, width=92, pinned="left",
+                            cellRenderer=action_renderer, suppressSizeToFit=True,
+                            filter=False, sortable=False)
+        gb.configure_column("req",              headerName="Requisição",
+                            editable=False, width=110, pinned="left", suppressSizeToFit=True)
+        gb.configure_column("id",               hide=True)
         gb.configure_column("data_solicitacao", headerName="Dt. Solicitação",
                             width=130, suppressSizeToFit=True)
         gb.configure_column("empresa",          headerName="Empresa",   width=150)
         gb.configure_column("item",             headerName="Item",      width=260)
         gb.configure_column("fornecedor",       headerName="Fornecedor", width=160)
         gb.configure_column("valor",            headerName="Valor (R$)",
-                            type=["numericColumn"], width=115)
+                            type=["numericColumn"], width=120,
+                            valueFormatter=currency_formatter)
+        gb.configure_column("anexos_orc",       headerName="Orç./Anexos",
+                            editable=False, width=120, suppressSizeToFit=True,
+                            filter=False)
         gb.configure_column(
             "situacao",
             headerName="Status",
@@ -842,7 +871,7 @@ with aba_requisicoes:
             fit_columns_on_grid_load=True,
             allow_unsafe_jscode=True,
             theme="streamlit",
-            key="viewer_requisicoes_v2",
+            key=f"viewer_requisicoes_v2_{st.session_state.get('_grid_nonce', 0)}",
             height=520,
         )
 
@@ -864,14 +893,19 @@ with aba_requisicoes:
         # ── Detectar seleção para abrir dialog ────────────────────────────
         selected_rows = grid_result.get("selected_rows")
         selected_id = resolve_selected_req_id(selected_rows)
-        if selected_id is not None:
-            if selected_id != st.session_state.get("_last_dialog_req_id"):
-                st.session_state.selected_req_id = selected_id
-                st.session_state.open_req_dialog = True
+        if selected_id is None:
+            # Sem seleção (ex.: após remontar a grid): libera reabrir qualquer linha
+            st.session_state.pop("_last_dialog_req_id", None)
+        elif selected_id != st.session_state.get("_last_dialog_req_id"):
+            st.session_state.selected_req_id = selected_id
+            st.session_state.open_req_dialog = True
 
         if st.session_state.get("open_req_dialog") and st.session_state.get("selected_req_id") is not None:
             st.session_state.open_req_dialog = False
             st.session_state["_last_dialog_req_id"] = st.session_state["selected_req_id"]
+            # Bump no nonce → na próxima execução a grid remonta sem seleção,
+            # permitindo reabrir a mesma requisição depois de fechar o modal.
+            st.session_state["_grid_nonce"] = st.session_state.get("_grid_nonce", 0) + 1
             open_requisicao_dialog(int(st.session_state["selected_req_id"]))
 
     else:
