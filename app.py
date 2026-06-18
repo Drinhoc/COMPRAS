@@ -11,7 +11,7 @@ import streamlit as st
 from st_aggrid import AgGrid, GridOptionsBuilder, JsCode
 from st_aggrid.shared import GridUpdateMode
 
-from src import crud, excel_io, metrics, pedido
+from src import auth, crud, excel_io, metrics, pedido
 from src.constants import COLUMN_ORDER, DISPLAY_NAMES, STATUS_LIST
 from src.db import get_database_url, init_db, insert_many, is_sqlite_url
 
@@ -54,6 +54,30 @@ if is_sqlite_url(database_url):
         st.error("DATABASE_URL não configurada no Railway. O banco não é persistente.")
         st.stop()
 init_db()
+
+# ── Autenticação ──────────────────────────────────────────────────────────
+USER = auth.require_login()
+PODE_EDITAR = auth.pode("editar")
+PODE_EXCLUIR = auth.pode("excluir")
+PODE_APROVAR = auth.pode("aprovar")
+PODE_ADMIN = auth.pode("admin")
+VE_LOGS = auth.pode("logs")
+VE_FINANCEIRO = auth.pode("ver_financeiro")
+PODE_IMPORTAR = auth.pode("importar")
+
+
+def registrar_log(acao: str, entidade: str | None = None, eid: object = None, detalhe: str = "") -> None:
+    crud.registrar_evento(USER.get("login", ""), USER.get("papel", ""), acao, entidade, eid, detalhe)
+
+
+# Identificação do usuário + logout na sidebar
+with st.sidebar:
+    _u1, _u2 = st.columns([3, 1])
+    _u1.caption(f"👤 **{USER['nome']}** · {auth.PAPEL_LABEL.get(USER['papel'], USER['papel'])}")
+    if _u2.button("Sair", use_container_width=True):
+        auth.logout()
+        st.rerun()
+    st.markdown("---")
 
 
 # ---------------------------------------------------------------------------
@@ -288,7 +312,8 @@ def render_filters() -> dict:
 filters = render_filters()
 
 st.sidebar.markdown("---")
-with st.sidebar.expander("Admin (MVP)", expanded=False):
+if PODE_ADMIN:
+  with st.sidebar.expander("Admin (MVP)", expanded=False):
     st.caption("Use apenas em fase de criação/homologação.")
     st.warning("Essa ação apaga TODAS as requisições, orçamentos, anexos e aprovações.")
     confirm_reset = st.checkbox("Entendo que essa ação é irreversível", key="confirm_reset_all")
@@ -488,7 +513,9 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
 
     with tabs["dados"]:
         payload = render_requisicao_form(f"edit_{selected_req_id}", req_data)
-        if st.button(
+        if not PODE_EDITAR:
+            st.info("👁️ Modo somente leitura — seu perfil não pode editar a requisição.")
+        if PODE_EDITAR and st.button(
             "💾 Salvar dados da requisição",
             key=f"save_edit_{selected_req_id}",
             use_container_width=True,
@@ -502,27 +529,30 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
                 crud.update_requisicao, selected_req_id, payload,
                 sucesso="Requisição atualizada com sucesso.",
             ):
+                registrar_log("EDITOU", "requisicao", selected_req_id)
                 st.session_state.pop("selected_req_id", None)
                 st.rerun()
 
-        st.markdown("---")
-        with st.expander("🗑️ Excluir esta requisição"):
-            st.warning("Esta ação remove a requisição e seus itens, orçamentos, aprovações e anexos.")
-            confirma = st.checkbox(
-                "Confirmo que desejo excluir definitivamente.",
-                key=f"confirm_del_req_{selected_req_id}",
-            )
-            if st.button(
-                "Excluir definitivamente",
-                key=f"btn_del_req_{selected_req_id}",
-                use_container_width=True,
-                type="primary",
-                disabled=not confirma,
-            ):
-                if run_safe(crud.delete_requisicao, selected_req_id,
-                            sucesso="Requisição excluída.", icone="🗑️"):
-                    st.session_state.pop("selected_req_id", None)
-                    st.rerun()
+        if PODE_EXCLUIR:
+            st.markdown("---")
+            with st.expander("🗑️ Excluir esta requisição"):
+                st.warning("Esta ação remove a requisição e seus itens, orçamentos, aprovações e anexos.")
+                confirma = st.checkbox(
+                    "Confirmo que desejo excluir definitivamente.",
+                    key=f"confirm_del_req_{selected_req_id}",
+                )
+                if st.button(
+                    "Excluir definitivamente",
+                    key=f"btn_del_req_{selected_req_id}",
+                    use_container_width=True,
+                    type="primary",
+                    disabled=not confirma,
+                ):
+                    if run_safe(crud.delete_requisicao, selected_req_id,
+                                sucesso="Requisição excluída.", icone="🗑️"):
+                        registrar_log("EXCLUIU", "requisicao", selected_req_id)
+                        st.session_state.pop("selected_req_id", None)
+                        st.rerun()
 
     with tabs["itens"]:
         st.markdown("##### Itens da requisição")
@@ -537,9 +567,10 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
         edited_itens = st.data_editor(
             df_itens[["descricao", "quantidade", "unidade", "valor_unitario", "observacao"]],
             key=f"itens_editor_{selected_req_id}",
-            num_rows="dynamic",
+            num_rows="dynamic" if PODE_EDITAR else "fixed",
             use_container_width=True,
             hide_index=True,
+            disabled=not PODE_EDITAR,
             column_config={
                 "descricao": st.column_config.TextColumn("Descrição", required=True, width="large"),
                 "quantidade": st.column_config.NumberColumn("Qtde", min_value=0, step=1, format="%g"),
@@ -559,22 +590,24 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
         except Exception:
             pass
 
-        atualizar_valor = st.checkbox(
-            "Atualizar o Valor da requisição com o total dos itens",
-            value=True,
-            key=f"upd_valor_itens_{selected_req_id}",
-            help="O Valor passa a ser a soma dos itens. Você ainda pode ajustá-lo manualmente na aba Editar Dados.",
-        )
-        if st.button("💾 Salvar itens", key=f"save_itens_{selected_req_id}", use_container_width=True, type="primary"):
-            rows = edited_itens.to_dict("records")
+        if PODE_EDITAR:
+            atualizar_valor = st.checkbox(
+                "Atualizar o Valor da requisição com o total dos itens",
+                value=True,
+                key=f"upd_valor_itens_{selected_req_id}",
+                help="O Valor passa a ser a soma dos itens. Você ainda pode ajustá-lo manualmente na aba Editar Dados.",
+            )
+            if st.button("💾 Salvar itens", key=f"save_itens_{selected_req_id}", use_container_width=True, type="primary"):
+                rows = edited_itens.to_dict("records")
 
-            def _salvar_itens():
-                crud.replace_itens(selected_req_id, rows)
-                if atualizar_valor:
-                    crud.set_valor_requisicao(selected_req_id, float(_tot or 0))
+                def _salvar_itens():
+                    crud.replace_itens(selected_req_id, rows)
+                    if atualizar_valor:
+                        crud.set_valor_requisicao(selected_req_id, float(_tot or 0))
 
-            if run_safe(_salvar_itens, sucesso="Itens salvos."):
-                st.rerun()
+                if run_safe(_salvar_itens, sucesso="Itens salvos."):
+                    registrar_log("EDITOU_ITENS", "requisicao", selected_req_id)
+                    st.rerun()
 
     with tabs["orc"]:
         orcs = crud.list_orcamentos(selected_req_id)
@@ -588,33 +621,36 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
                 cval.markdown(format_currency(o.get("valor")))
                 cprz.markdown(o.get("prazo_entrega") or "—")
                 cst.caption(o.get("status_orcamento") or "RECEBIDO")
-                if cok.button("✅", key=f"ok_orc_{selected_req_id}_{_oid}", help="Aprovar este orçamento"):
+                if PODE_APROVAR and cok.button("✅", key=f"ok_orc_{selected_req_id}_{_oid}", help="Aprovar este orçamento"):
                     crud.update_orcamento(_oid, {"status_orcamento": "APROVADO"})
                     crud.create_aprovacao({
                         "requisicao_id": selected_req_id, "orcamento_id": _oid,
                         "acao": "APROVADO", "comentario": "Aprovado na lista de orçamentos.",
-                        "aprovador": "GESTOR",
+                        "aprovador": USER["nome"],
                     })
                     if req_data:
                         _upd = dict(req_data); _upd["situacao"] = "Comprado"
                         crud.update_requisicao(selected_req_id, _upd)
+                    registrar_log("APROVOU", "orcamento", _oid, f"REQ {selected_req_id}")
                     st.toast(f"Orçamento #{_oid} aprovado.", icon="✅")
                     st.rerun()
-                if cno.button("❌", key=f"no_orc_{selected_req_id}_{_oid}", help="Rejeitar este orçamento"):
+                if PODE_APROVAR and cno.button("❌", key=f"no_orc_{selected_req_id}_{_oid}", help="Rejeitar este orçamento"):
                     crud.update_orcamento(_oid, {"status_orcamento": "REJEITADO"})
                     crud.create_aprovacao({
                         "requisicao_id": selected_req_id, "orcamento_id": _oid,
                         "acao": "REPROVADO", "comentario": "Rejeitado na lista de orçamentos.",
-                        "aprovador": "GESTOR",
+                        "aprovador": USER["nome"],
                     })
+                    registrar_log("REPROVOU", "orcamento", _oid, f"REQ {selected_req_id}")
                     st.toast(f"Orçamento #{_oid} rejeitado.", icon="❌")
                     st.rerun()
             st.markdown("---")
         else:
             st.info("Nenhum orçamento cadastrado para esta requisição.")
 
-        st.markdown("##### Adicionar Orçamento")
-        with st.form(f"form_orcamento_dialog_{selected_req_id}"):
+        if PODE_EDITAR:
+          st.markdown("##### Adicionar Orçamento")
+          with st.form(f"form_orcamento_dialog_{selected_req_id}"):
             oc1, oc2 = st.columns(2)
             fornecedor_orc = oc1.text_input("Fornecedor")
             valor_orc = oc1.text_input("Valor")
@@ -634,10 +670,11 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
                         "observacao": obs_orc.strip(),
                     }
                 )
+                registrar_log("ADICIONOU_ORCAMENTO", "requisicao", selected_req_id)
                 st.toast("Orçamento adicionado.", icon="✅")
                 st.rerun()
 
-        if orcs:
+        if orcs and PODE_EXCLUIR:
             with st.expander("🗑️ Excluir Orçamento"):
                 del_orc = st.selectbox(
                     "Selecione o orçamento pelo ID",
@@ -680,7 +717,9 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
             st.info("Nenhuma ação de aprovação registrada.")
 
         st.markdown("##### Registrar Aprovação")
-        if not orcs_aprov:
+        if not PODE_APROVAR:
+            st.info("👁️ Seu perfil não pode registrar aprovações.")
+        elif not orcs_aprov:
             st.warning("Cadastre ao menos um orçamento na aba 💰 Orçamentos para aprovar.")
         else:
             orc_escolhido = st.selectbox(
@@ -696,7 +735,7 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
             )
             if acao == "APROVADO PARCIAL":
                 st.caption("Descreva no comentário o que foi aprovado (ex.: 'Orç. 3 itens 5 e 7; restante no Orç. 2').")
-            aprovador = st.text_input("Aprovador", value="GESTOR", key=f"apr_{selected_req_id}")
+            aprovador = st.text_input("Aprovador", value=USER["nome"], key=f"apr_{selected_req_id}")
             comentario = st.text_area("Comentário / detalhamento", key=f"obs_apr_{selected_req_id}")
             if st.button("Registrar aprovação", key=f"btn_apr_{selected_req_id}", use_container_width=True, type="primary"):
                 crud.create_aprovacao(
@@ -720,6 +759,7 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
                     updated = dict(req_data)
                     updated["situacao"] = "Comprado"
                     crud.update_requisicao(selected_req_id, updated)
+                registrar_log(acao, "orcamento", int(orc_escolhido), f"REQ {selected_req_id}")
                 st.toast("Aprovação registrada.", icon="✅")
                 st.rerun()
 
@@ -738,23 +778,24 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
         else:
             st.info("Nenhum anexo enviado.")
 
-        st.markdown("##### Enviar Anexo")
-        up = st.file_uploader("Selecione o arquivo", key=f"anexo_{selected_req_id}")
-        ac1, ac2 = st.columns(2)
-        tipo_anexo = ac1.selectbox(
+        if PODE_EDITAR:
+          st.markdown("##### Enviar Anexo")
+          up = st.file_uploader("Selecione o arquivo", key=f"anexo_{selected_req_id}")
+          ac1, ac2 = st.columns(2)
+          tipo_anexo = ac1.selectbox(
             "Tipo de anexo",
             ["orcamento", "nf", "contrato", "outros"],
             key=f"tipo_{selected_req_id}",
-        )
-        # Vínculo opcional a um orçamento
-        _orc_opts = [None] + [o["id"] for o in orcs_anx]
-        orc_vinculo = ac2.selectbox(
+          )
+          # Vínculo opcional a um orçamento
+          _orc_opts = [None] + [o["id"] for o in orcs_anx]
+          orc_vinculo = ac2.selectbox(
             "Vincular a um orçamento (opcional)",
             options=_orc_opts,
             format_func=lambda i: "— Nenhum" if i is None else orc_anx_label.get(i, f"Orç. #{i}"),
             key=f"anexo_orc_{selected_req_id}",
-        )
-        if st.button("Salvar anexo", key=f"btn_save_anexo_{selected_req_id}", use_container_width=True):
+          )
+          if st.button("Salvar anexo", key=f"btn_save_anexo_{selected_req_id}", use_container_width=True):
             if up is None:
                 st.warning("Selecione um arquivo antes de salvar.")
             elif run_safe(
@@ -766,10 +807,11 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
                     "nome_arquivo": up.name,
                     "mime_type": up.type,
                     "conteudo": up.getvalue(),
-                    "uploaded_by": "gestor",
+                    "uploaded_by": USER["login"],
                 },
                 sucesso="Anexo salvo.",
             ):
+                registrar_log("ANEXOU", "requisicao", selected_req_id, up.name)
                 st.rerun()
 
         if anexos:
@@ -789,19 +831,21 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
                     key=f"dl_{selected_req_id}_{anexo_id}",
                     use_container_width=True,
                 )
-            confirma_anx = st.checkbox(
-                "Confirmo a exclusão deste anexo.",
-                key=f"confirm_del_anexo_{selected_req_id}",
-            )
-            if st.button(
-                "🗑️ Excluir anexo",
-                key=f"del_anexo_{selected_req_id}",
-                use_container_width=True,
-                disabled=not confirma_anx,
-            ):
-                if run_safe(crud.delete_anexo, int(anexo_id),
-                            sucesso="Anexo excluído.", icone="🗑️"):
-                    st.rerun()
+            if PODE_EXCLUIR:
+                confirma_anx = st.checkbox(
+                    "Confirmo a exclusão deste anexo.",
+                    key=f"confirm_del_anexo_{selected_req_id}",
+                )
+                if st.button(
+                    "🗑️ Excluir anexo",
+                    key=f"del_anexo_{selected_req_id}",
+                    use_container_width=True,
+                    disabled=not confirma_anx,
+                ):
+                    if run_safe(crud.delete_anexo, int(anexo_id),
+                                sucesso="Anexo excluído.", icone="🗑️"):
+                        registrar_log("EXCLUIU_ANEXO", "requisicao", selected_req_id)
+                        st.rerun()
 
     with tabs["pedido"]:
         st.markdown("##### Gerar Pedido de Compra (PDF)")
@@ -883,6 +927,7 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
             try:
                 st.session_state[f"_pdf_{selected_req_id}"] = pedido.gerar_pedido_pdf(empresa_emissora, dados_ped)
                 st.session_state[f"_pdf_nome_{selected_req_id}"] = f"Pedido_{ped_numero}.pdf"
+                registrar_log("GEROU_PEDIDO", "requisicao", selected_req_id, f"{empresa_emissora} · {ped_numero}")
             except Exception as exc:  # noqa: BLE001
                 st.error(f"Erro ao gerar o PDF: {exc}")
 
@@ -907,16 +952,25 @@ st.title("Sistema de Controle de Requisições")
 
 _badge_count = crud.count_requisicoes(filters)
 
-aba_dashboard, aba_requisicoes, aba_analises, aba_projetos, aba_importar = st.tabs([
-    "📊 Dashboard",
-    f"📋 Requisições ({_badge_count})",
-    "📈 Análises",
-    "📁 Projetos",
-    "📥 Importar",
-])
+_tab_specs: list[tuple[str, str]] = []
+if VE_FINANCEIRO:
+    _tab_specs.append(("dashboard", "📊 Dashboard"))
+_tab_specs.append(("requisicoes", f"📋 Requisições ({_badge_count})"))
+if VE_FINANCEIRO:
+    _tab_specs.append(("analises", "📈 Análises"))
+    _tab_specs.append(("projetos", "📁 Projetos"))
+if PODE_IMPORTAR:
+    _tab_specs.append(("importar", "📥 Importar"))
+if VE_LOGS:
+    _tab_specs.append(("atividades", "🗒️ Atividades"))
+if PODE_ADMIN:
+    _tab_specs.append(("admin", "⚙️ Admin"))
+_tab_objs = st.tabs([_lbl for _, _lbl in _tab_specs])
+TABS = {_k: _o for (_k, _), _o in zip(_tab_specs, _tab_objs)}
 
 # ---- Dashboard ----
-with aba_dashboard:
+if "dashboard" in TABS:
+  with TABS["dashboard"]:
     import plotly.express as px
 
     st.subheader("Visão Geral")
@@ -1048,10 +1102,12 @@ with aba_dashboard:
 
 
 # ---- Requisições ----
-with aba_requisicoes:
+if "requisicoes" in TABS:
+  with TABS["requisicoes"]:
     st.subheader("Requisições")
 
-    with st.expander("➕ Criar Nova Requisição", expanded=False):
+    if PODE_EDITAR:
+      with st.expander("➕ Criar Nova Requisição", expanded=False):
         payload_novo = render_requisicao_form("novo")
         if st.button("Criar requisição", key="btn_criar_req", use_container_width=True, type="primary"):
             errors = validate_payload(payload_novo)
@@ -1060,6 +1116,7 @@ with aba_requisicoes:
                     st.error(err)
             else:
                 crud.create_requisicao(payload_novo)
+                registrar_log("CRIOU", "requisicao", detalhe=payload_novo.get("item", ""))
                 st.toast("Requisição criada com sucesso.", icon="✅")
                 st.rerun()
 
@@ -1228,15 +1285,15 @@ with aba_requisicoes:
                             width=130, suppressSizeToFit=True,
                             valueFormatter=date_formatter)
         gb.configure_column("empresa",          headerName="Empresa",   width=150,
-                            editable=True)
+                            editable=PODE_EDITAR)
         gb.configure_column("item",             headerName="Item",      width=260,
-                            editable=True)
+                            editable=PODE_EDITAR)
         gb.configure_column("fornecedor",       headerName="Fornecedor", width=160,
-                            editable=True)
+                            editable=PODE_EDITAR)
         gb.configure_column("valor",            headerName="Valor (R$)",
                             type=["numericColumn"], width=120,
                             valueFormatter=currency_formatter,
-                            editable=True,
+                            editable=PODE_EDITAR,
                             cellEditor="agNumberCellEditor")
         gb.configure_column("col_orc",          headerName="Orç.",
                             editable=False, width=80, suppressSizeToFit=True,
@@ -1250,7 +1307,7 @@ with aba_requisicoes:
             headerName="Status",
             width=130,
             suppressSizeToFit=True,
-            editable=True,
+            editable=PODE_EDITAR,
             cellEditor="agSelectCellEditor",
             cellEditorParams={"values": STATUS_LIST},
             singleClickEdit=True,
@@ -1265,11 +1322,14 @@ with aba_requisicoes:
             stopEditingWhenCellsLoseFocus=True,
         )
 
-        st.caption(
-            "✏️ Clique numa célula de **Status**, **Empresa**, **Item**, **Fornecedor** ou **Valor** "
-            "para editar; ao sair da célula, salva automaticamente. "
-            "Clique no **código REQ** para abrir os detalhes."
-        )
+        if PODE_EDITAR:
+            st.caption(
+                "✏️ Clique numa célula de **Status**, **Empresa**, **Item**, **Fornecedor** ou **Valor** "
+                "para editar; ao sair da célula, salva automaticamente. "
+                "Clique no **código REQ** para abrir os detalhes."
+            )
+        else:
+            st.caption("👁️ Modo somente leitura. Clique no **código REQ** para ver os detalhes.")
         grid_result = AgGrid(
             df_grid,
             gridOptions=gb.build(),
@@ -1283,7 +1343,7 @@ with aba_requisicoes:
 
         # ── Detectar edição inline (Status, Fornecedor, Valor) ────────────
         df_returned = grid_result.get("data")
-        if df_returned is not None and not df_returned.empty and "id" in df_returned.columns:
+        if PODE_EDITAR and df_returned is not None and not df_returned.empty and "id" in df_returned.columns:
             _editaveis = ["situacao", "fornecedor", "valor", "empresa", "item"]
             for _, ret_row in df_returned.iterrows():
                 _rid = ret_row.get("id")
@@ -1314,6 +1374,7 @@ with aba_requisicoes:
                             _updates["fornecedor"] = str(_new or "").strip()
                 if _updates:
                     crud.update_requisicao(int(_rid), _updates)
+                    registrar_log("EDITOU_INLINE", "requisicao", int(_rid), ", ".join(_updates.keys()))
                     st.toast(f"REQ-{int(_rid):04d} atualizada.", icon="✅")
                     st.session_state.pop("_last_dialog_req_id", None)
                     st.rerun()
@@ -1363,7 +1424,8 @@ with aba_requisicoes:
 
 
 # ---- Análises ----
-with aba_analises:
+if "analises" in TABS:
+  with TABS["analises"]:
     import plotly.express as px  # noqa: F811 — already imported in dashboard block
 
     st.subheader("Análises de Compras")
@@ -1613,7 +1675,8 @@ with aba_analises:
 
 
 # ---- Projetos ----
-with aba_projetos:
+if "projetos" in TABS:
+  with TABS["projetos"]:
     st.subheader("Projetos")
 
     # ── Criar novo projeto ────────────────────────────────────────────────
@@ -1744,7 +1807,8 @@ with aba_projetos:
 
 
 # ---- Importar ----
-with aba_importar:
+if "importar" in TABS:
+  with TABS["importar"]:
     st.subheader("Importar Excel")
     upload = st.file_uploader("Selecione o arquivo .xlsx", type=["xlsx"], key="upload_excel")
     if upload is not None:
@@ -1773,6 +1837,7 @@ with aba_importar:
             quantidade = len(registros)
             if quantidade:
                 insert_many(registros)
+                registrar_log("IMPORTOU", detalhe=f"{quantidade} registros")
                 st.success(f"{quantidade} registros importados com sucesso.")
                 st.warning("Importação não remove duplicatas automaticamente.")
                 if total_after < total_before:
@@ -1782,3 +1847,86 @@ with aba_importar:
                     )
             else:
                 st.info("Nenhum registro encontrado para importar.")
+
+
+# ---- Atividades (log global) — Gestor e ADM ----
+if "atividades" in TABS:
+  with TABS["atividades"]:
+    st.subheader("🗒️ Atividades recentes")
+    st.caption("Histórico de ações registradas no sistema (mais recentes primeiro).")
+    _eventos = crud.list_eventos(limit=500)
+    if _eventos:
+        _df_ev = pd.DataFrame(_eventos)
+        _df_ev["created_at"] = pd.to_datetime(_df_ev["created_at"], errors="coerce").dt.strftime("%d/%m/%Y %H:%M")
+        _df_ev = _df_ev.rename(columns={
+            "created_at": "Data/Hora", "usuario": "Usuário", "papel": "Papel",
+            "acao": "Ação", "entidade": "Entidade", "entidade_id": "ID", "detalhe": "Detalhe",
+        })
+        st.dataframe(_df_ev, use_container_width=True, hide_index=True)
+    else:
+        st.info("Nenhuma atividade registrada ainda.")
+
+
+# ---- Painel Admin — somente ADM ----
+if "admin" in TABS:
+  with TABS["admin"]:
+    st.subheader("⚙️ Painel do Administrador")
+
+    st.markdown("#### 🔌 Conexão / Banco")
+    _is_sqlite = is_sqlite_url(database_url)
+    _ac1, _ac2, _ac3 = st.columns(3)
+    _ac1.metric("Banco", "SQLite (efêmero)" if _is_sqlite else "PostgreSQL")
+    _ac2.metric("Requisições", crud.count_requisicoes({}))
+    _ac3.metric("Usuários", crud.count_usuarios())
+    if _is_sqlite:
+        st.warning("Banco SQLite: dados não persistem em deploy. Configure DATABASE_URL (Postgres).")
+    else:
+        st.success("PostgreSQL conectado — dados persistentes.")
+
+    st.markdown("---")
+    st.markdown("#### 👥 Usuários")
+    _usuarios = crud.list_usuarios()
+    if _usuarios:
+        _dfu = pd.DataFrame(_usuarios)[["id", "nome", "login", "papel", "ativo", "created_at"]]
+        _dfu["ativo"] = _dfu["ativo"].apply(lambda v: "Sim" if v else "Não")
+        st.dataframe(_dfu, use_container_width=True, hide_index=True)
+
+    with st.expander("➕ Criar usuário", expanded=False):
+        _n = st.text_input("Nome", key="adm_novo_nome")
+        _l = st.text_input("Login", key="adm_novo_login")
+        _s = st.text_input("Senha provisória", type="password", key="adm_novo_senha")
+        _p = st.selectbox("Papel", auth.PAPEIS, format_func=lambda p: auth.PAPEL_LABEL[p], key="adm_novo_papel")
+        if st.button("Criar usuário", use_container_width=True, type="primary", key="adm_btn_criar"):
+            if not (_n.strip() and _l.strip() and _s):
+                st.error("Preencha nome, login e senha.")
+            elif crud.get_usuario_por_login(_l):
+                st.error("Já existe um usuário com esse login.")
+            elif run_safe(crud.create_usuario, _n, _l, _s, _p, sucesso="Usuário criado."):
+                registrar_log("CRIOU_USUARIO", "usuario", detalhe=_l)
+                st.rerun()
+
+    with st.expander("✏️ Editar / Resetar senha / Ativar-Desativar", expanded=False):
+        if _usuarios:
+            _alvo = st.selectbox(
+                "Usuário", options=[u["id"] for u in _usuarios],
+                format_func=lambda i: next((f"{u['nome']} ({u['login']})" for u in _usuarios if u["id"] == i), str(i)),
+                key="adm_edit_alvo",
+            )
+            _u_sel = next((u for u in _usuarios if u["id"] == _alvo), None)
+            if _u_sel:
+                _ep = st.selectbox("Papel", auth.PAPEIS, index=auth.PAPEIS.index(_u_sel["papel"]) if _u_sel["papel"] in auth.PAPEIS else 0,
+                                   format_func=lambda p: auth.PAPEL_LABEL[p], key="adm_edit_papel")
+                _ea = st.checkbox("Ativo", value=bool(_u_sel["ativo"]), key="adm_edit_ativo")
+                _ecol1, _ecol2 = st.columns(2)
+                if _ecol1.button("Salvar alterações", use_container_width=True, key="adm_btn_salvar"):
+                    if run_safe(crud.update_usuario, int(_alvo), {"papel": _ep, "ativo": 1 if _ea else 0},
+                                sucesso="Usuário atualizado."):
+                        registrar_log("EDITOU_USUARIO", "usuario", int(_alvo))
+                        st.rerun()
+                _nova = _ecol2.text_input("Nova senha", type="password", key="adm_reset_senha")
+                if _ecol2.button("Resetar senha", use_container_width=True, key="adm_btn_reset"):
+                    if not _nova:
+                        st.error("Informe a nova senha.")
+                    elif run_safe(crud.set_senha, int(_alvo), _nova, sucesso="Senha redefinida."):
+                        registrar_log("RESETOU_SENHA", "usuario", int(_alvo))
+                        st.rerun()

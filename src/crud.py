@@ -11,12 +11,128 @@ from sqlalchemy import text
 def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
+import hashlib
+import os
+import secrets
+
 from .constants import COLUMN_ORDER
 from .db import ENGINE
 
 
 def normalize_filter_value(value: str) -> str:
     return value.strip().upper()
+
+
+# ===========================================================================
+# Usuários e autenticação
+# ===========================================================================
+
+def hash_senha(senha: str, salt: str | None = None) -> tuple[str, str]:
+    """Gera (hash_hex, salt_hex) via PBKDF2-HMAC-SHA256 (stdlib)."""
+    salt = salt or secrets.token_hex(16)
+    dk = hashlib.pbkdf2_hmac("sha256", senha.encode("utf-8"), bytes.fromhex(salt), 100_000)
+    return dk.hex(), salt
+
+
+def verificar_senha(senha: str, hash_hex: str, salt: str) -> bool:
+    calc, _ = hash_senha(senha, salt)
+    return secrets.compare_digest(calc, hash_hex)
+
+
+def list_usuarios(incluir_inativos: bool = True) -> list[dict[str, Any]]:
+    q = "SELECT id, nome, login, papel, ativo, created_at FROM usuarios"
+    if not incluir_inativos:
+        q += " WHERE ativo = 1"
+    q += " ORDER BY nome"
+    with ENGINE.connect() as conn:
+        return [dict(r._mapping) for r in conn.execute(text(q)).fetchall()]
+
+
+def get_usuario_por_login(login: str) -> dict[str, Any] | None:
+    with ENGINE.connect() as conn:
+        row = conn.execute(
+            text("SELECT * FROM usuarios WHERE LOWER(login) = LOWER(:l)"),
+            {"l": login.strip()},
+        ).fetchone()
+        return dict(row._mapping) if row else None
+
+
+def create_usuario(nome: str, login: str, senha: str, papel: str) -> None:
+    h, salt = hash_senha(senha)
+    with ENGINE.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO usuarios (nome, login, senha_hash, salt, papel, ativo) "
+                "VALUES (:nome, :login, :h, :salt, :papel, 1)"
+            ),
+            {"nome": nome.strip(), "login": login.strip(), "h": h, "salt": salt, "papel": papel},
+        )
+
+
+def update_usuario(usuario_id: int, dados: dict[str, Any]) -> None:
+    permitidos = {"nome", "papel", "ativo"}
+    campos = {k: v for k, v in dados.items() if k in permitidos}
+    if not campos:
+        return
+    set_clause = ", ".join(f"{k} = :{k}" for k in campos)
+    campos["id"] = usuario_id
+    with ENGINE.begin() as conn:
+        conn.execute(text(f"UPDATE usuarios SET {set_clause} WHERE id = :id"), campos)
+
+
+def set_senha(usuario_id: int, nova_senha: str) -> None:
+    h, salt = hash_senha(nova_senha)
+    with ENGINE.begin() as conn:
+        conn.execute(
+            text("UPDATE usuarios SET senha_hash = :h, salt = :s WHERE id = :id"),
+            {"h": h, "s": salt, "id": usuario_id},
+        )
+
+
+def count_usuarios() -> int:
+    with ENGINE.connect() as conn:
+        return int(conn.execute(text("SELECT COUNT(*) FROM usuarios")).scalar() or 0)
+
+
+def seed_admin() -> dict[str, str] | None:
+    """Cria um ADM inicial se não houver usuários. Retorna credenciais geradas."""
+    if count_usuarios() > 0:
+        return None
+    login = os.getenv("ADMIN_LOGIN", "admin")
+    senha = os.getenv("ADMIN_SENHA", "admin")
+    create_usuario("Administrador", login, senha, "ADM")
+    return {"login": login, "senha": senha}
+
+
+# ===========================================================================
+# Log de eventos (atividades)
+# ===========================================================================
+
+def registrar_evento(usuario: str, papel: str, acao: str,
+                     entidade: str | None = None, entidade_id: object = None,
+                     detalhe: str = "") -> None:
+    try:
+        with ENGINE.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO eventos (usuario, papel, acao, entidade, entidade_id, detalhe) "
+                    "VALUES (:u, :p, :a, :e, :eid, :d)"
+                ),
+                {"u": usuario, "p": papel, "a": acao, "e": entidade,
+                 "eid": str(entidade_id) if entidade_id is not None else None, "d": detalhe},
+            )
+    except Exception:  # noqa: BLE001 - log nunca deve quebrar a operação principal
+        pass
+
+
+def list_eventos(limit: int = 300) -> list[dict[str, Any]]:
+    with ENGINE.connect() as conn:
+        rows = conn.execute(
+            text("SELECT created_at, usuario, papel, acao, entidade, entidade_id, detalhe "
+                 "FROM eventos ORDER BY id DESC LIMIT :lim"),
+            {"lim": limit},
+        ).fetchall()
+        return [dict(r._mapping) for r in rows]
 
 
 def build_filters(filters: dict[str, Any]) -> tuple[str, dict[str, Any]]:

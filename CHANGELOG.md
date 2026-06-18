@@ -5,6 +5,13 @@ Histórico das principais mudanças do Sistema de Controle de Requisições de C
 ## [Não lançado] — branch `claude/modest-curie-pdg5ac`
 
 ### Adicionado
+- **Autenticação por usuário/senha** (hash PBKDF2) com **3 perfis** (ADM, Gestor,
+  Comprador) e mapa central de permissões (`src/auth.py → PERMISSOES`). ADM inicial
+  criado no primeiro acesso (`ADMIN_LOGIN`/`ADMIN_SENHA`).
+- **Painel ⚙️ Admin** (só ADM): gestão de usuários (criar/editar/ativar/resetar senha)
+  e status da conexão/banco.
+- **Log global de atividades** (tabela `eventos`) na aba **🗒️ Atividades** (Gestor/ADM),
+  registrando quem fez cada ação e quando.
 - **Gerador de Pedido de Compra em PDF** (`src/pedido.py`, reportlab): aba **🧾 Pedido**
   no modal, com escolha da empresa emissora (Engemetal/Bluesun e Engecomp),
   destinatário, itens editáveis, desconto, pagamento, entrega e observações.

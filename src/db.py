@@ -98,6 +98,32 @@ projetos = Table(
     Column("criado_em", String, server_default=text("CURRENT_TIMESTAMP")),
 )
 
+usuarios = Table(
+    "usuarios",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("nome", String, nullable=False),
+    Column("login", String, nullable=False, unique=True),
+    Column("senha_hash", String, nullable=False),
+    Column("salt", String, nullable=False),
+    Column("papel", String, nullable=False),  # ADM | GESTOR | COMPRADOR
+    Column("ativo", Integer, server_default=text("1")),
+    Column("created_at", String, server_default=text("CURRENT_TIMESTAMP")),
+)
+
+eventos = Table(
+    "eventos",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("usuario", String),
+    Column("papel", String),
+    Column("acao", String, nullable=False),
+    Column("entidade", String),
+    Column("entidade_id", String),
+    Column("detalhe", String),
+    Column("created_at", String, server_default=text("CURRENT_TIMESTAMP")),
+)
+
 
 def _normalize_database_url(url: str) -> str:
     if url.startswith("postgres://"):

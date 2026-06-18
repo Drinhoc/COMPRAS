@@ -9,6 +9,7 @@ O app roda 100% no navegador, com banco de dados (Postgres em produção / SQLit
 ## Sumário
 
 - [O que o app faz](#o-que-o-app-faz)
+- [Acesso e perfis de usuário](#acesso-e-perfis-de-usuário)
 - [Estrutura das telas (abas)](#estrutura-das-telas-abas)
 - [O modal da requisição](#o-modal-da-requisição)
 - [Gerador de Pedido de Compra (PDF)](#gerador-de-pedido-de-compra-pdf)
@@ -38,6 +39,22 @@ O app roda 100% no navegador, com banco de dados (Postgres em produção / SQLit
 - **Importar** uma planilha Excel existente e **exportar** os dados filtrados de volta para Excel.
 
 Cada requisição registra **auditoria** (criada em / última alteração) e as exclusões pedem **confirmação** e removem os dados filhos em **cascata**.
+
+---
+
+## Acesso e perfis de usuário
+
+O app exige **login (usuário e senha)**. As senhas são guardadas com **hash PBKDF2-HMAC-SHA256** (sem armazenar texto puro). No primeiro acesso, se não houver nenhum usuário, o sistema **cria um ADM inicial** (`admin`/`admin` por padrão, ou os valores das variáveis `ADMIN_LOGIN`/`ADMIN_SENHA`) — **troque a senha** logo depois no painel ⚙️ Admin.
+
+Há **3 perfis**, definidos no mapa central `src/auth.py → PERMISSOES` (fácil de refinar):
+
+| Perfil | O que pode |
+|---|---|
+| **Administrador (ADM)** | Tudo: cria/edita/exclui, aprova, importa, vê logs e o **painel ⚙️ Admin** (gerencia usuários, vê a conexão do banco). |
+| **Gestor** | Vê tudo (dashboards/análises/projetos), **aprova/reprova** e vê o log de **🗒️ Atividades**. Não cria/edita/exclui e não vê o painel Admin. |
+| **Comprador** | Cria/edita requisições, itens, orçamentos, anexos, aprova e gera pedido. Não exclui, não importa e não vê logs/Admin. *(início mais permissivo — pode ser apertado em `PERMISSOES`)*. |
+
+> **Log de atividades:** todas as ações relevantes (login, criar/editar/excluir, aprovar, anexar, gerar pedido, gerenciar usuários) são registradas com **quem fez e quando**, visíveis na aba **🗒️ Atividades** (Gestor/ADM).
 
 ---
 
@@ -211,6 +228,7 @@ web: streamlit run app.py --server.port $PORT --server.address 0.0.0.0
 | Variável | Para quê |
 |---|---|
 | `DATABASE_URL` | **Obrigatória em produção.** String do Postgres do Railway. Sem ela, o app para e avisa que o banco não é persistente. |
+| `ADMIN_LOGIN` / `ADMIN_SENHA` | Opcionais. Credenciais do ADM inicial criado no primeiro acesso (padrão `admin`/`admin`). |
 | `MISE_PYTHON_GITHUB_ATTESTATIONS` | Defina como `false` se o build falhar na instalação do Python (ver FAQ). |
 
 > **Persistência:** em produção sempre aponte `DATABASE_URL` para o Postgres do Railway. O SQLite reseta a cada reinício do container.
@@ -234,7 +252,7 @@ src/
   ├── metrics.py      # agregações e indicadores para Dashboard/Análises
   ├── excel_io.py     # importar/exportar e normalizar Excel
   ├── pedido.py       # gerador de Pedido de Compra em PDF (reportlab)
-  └── auth.py         # require_pin() — controle de acesso por PIN
+  └── auth.py         # login, papéis e mapa central de permissões (PERMISSOES)
 ```
 
 **Stack:** Streamlit · pandas · SQLAlchemy (Postgres via psycopg2 / SQLite) · streamlit-aggrid · Plotly · openpyxl · reportlab.
@@ -251,6 +269,8 @@ src/
 | `aprovacoes` | Histórico de aprovações, vinculado a um `orcamento_id`. |
 | `anexos` | Arquivos (BLOB), com vínculo opcional a um `orcamento_id`. |
 | `projetos` | Catálogo de projetos. |
+| `usuarios` | Contas de acesso (nome, login, hash/salt da senha, papel, ativo). |
+| `eventos` | Log global de atividades (usuário, papel, ação, entidade, detalhe, data). |
 
 O schema é criado/migrado automaticamente em `db.py → init_db()` na inicialização do app (inclui as migrações de `projeto`, auditoria, `orcamento_id` em aprovações e a tabela `itens`).
 
