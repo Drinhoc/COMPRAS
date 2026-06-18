@@ -12,11 +12,14 @@ def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 import hashlib
+import logging
 import os
 import secrets
 
 from .constants import COLUMN_ORDER
 from .db import ENGINE
+
+logger = logging.getLogger("compras")
 
 
 def normalize_filter_value(value: str) -> str:
@@ -122,7 +125,12 @@ def registrar_evento(usuario: str, papel: str, acao: str,
                  "eid": str(entidade_id) if entidade_id is not None else None, "d": detalhe},
             )
     except Exception:  # noqa: BLE001 - log nunca deve quebrar a operação principal
-        pass
+        # Não propaga (uma falha de auditoria não pode derrubar a operação),
+        # mas deixa rastro nos logs do servidor para investigação.
+        logger.exception(
+            "Falha ao registrar evento de auditoria (usuario=%s, acao=%s, entidade=%s, id=%s)",
+            usuario, acao, entidade, entidade_id,
+        )
 
 
 def list_eventos(limit: int = 300) -> list[dict[str, Any]]:

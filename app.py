@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import os
 from datetime import date, timedelta
 
@@ -17,6 +18,13 @@ from src.db import get_database_url, init_db, insert_many, is_sqlite_url
 
 
 st.set_page_config(page_title="Controle de Compras", layout="wide")
+
+# Logging: erros vão para o stderr (visível nos logs do Railway).
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
+logger = logging.getLogger("compras")
 
 
 st.markdown(
@@ -103,6 +111,8 @@ def run_safe(fn, *args, sucesso: str | None = None, icone: str = "✅", **kwargs
     try:
         fn(*args, **kwargs)
     except Exception as exc:  # noqa: BLE001 - feedback amigável ao usuário
+        # Mensagem amigável na tela + rastro completo (stack trace) nos logs.
+        logger.exception("Erro ao executar operação %s", getattr(fn, "__name__", fn))
         st.error(f"Não foi possível concluir a operação: {exc}")
         return False
     if sucesso:
@@ -588,7 +598,8 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
             ).sum()
             st.metric("Total previsto dos itens", format_currency(_tot))
         except Exception:
-            pass
+            # Valor não-numérico digitado na grade: mantém total 0 e segue.
+            logger.debug("Falha ao calcular total previsto dos itens", exc_info=True)
 
         if PODE_EDITAR:
             atualizar_valor = st.checkbox(
@@ -929,6 +940,7 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
                 st.session_state[f"_pdf_nome_{selected_req_id}"] = f"Pedido_{ped_numero}.pdf"
                 registrar_log("GEROU_PEDIDO", "requisicao", selected_req_id, f"{empresa_emissora} · {ped_numero}")
             except Exception as exc:  # noqa: BLE001
+                logger.exception("Erro ao gerar PDF do pedido (req=%s)", selected_req_id)
                 st.error(f"Erro ao gerar o PDF: {exc}")
 
         _pdf_bytes = st.session_state.get(f"_pdf_{selected_req_id}")
