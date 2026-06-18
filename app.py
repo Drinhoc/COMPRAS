@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import io
 import os
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 import streamlit as st
@@ -13,21 +13,35 @@ from st_aggrid.shared import GridUpdateMode
 
 from src import crud, excel_io, metrics
 from src.constants import COLUMN_ORDER, DISPLAY_NAMES, STATUS_LIST
-from src.db import get_database_url, init_db, is_sqlite_url
+from src.db import get_database_url, init_db, insert_many, is_sqlite_url
 
 
 st.set_page_config(page_title="Controle de Compras", layout="wide")
 st.markdown(
     """
     <style>
-        [data-testid="stSidebar"] {
-            min-width: 400px;
-            max-width: 400px;
+        [data-testid="metric-container"] {
+            border: 1px solid #dee2e6;
+            border-radius: 10px;
+            padding: 10px 12px;
+            background-color: #f8f9fa;
+        }
+        [data-testid="stMetricValue"] {
+            font-size: 1.05rem !important;
+            line-height: 1.3 !important;
+            word-break: break-word;
+        }
+        [data-testid="stMetricLabel"] {
+            font-size: 0.76rem !important;
+        }
+        [data-testid="stMetricDelta"] {
+            font-size: 0.74rem !important;
         }
     </style>
     """,
     unsafe_allow_html=True,
 )
+
 database_url = get_database_url()
 if is_sqlite_url(database_url):
     st.warning(
@@ -40,193 +54,12 @@ if is_sqlite_url(database_url):
 init_db()
 
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def format_currency(value: float) -> str:
     return f"R$ {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-
-
-def render_filters() -> dict:
-    st.sidebar.header("Filtros")
-    preset = st.sidebar.radio(
-        "Visualização rápida",
-        ["Todos", "Pendentes", "Comprados", "Entregues"],
-        horizontal=False,
-        key="f_preset",
-    )
-
-    preset_map = {
-        "Todos": [],
-        "Pendentes": ["Solicitado"],
-        "Comprados": ["Comprado"],
-        "Entregues": ["Entregue"],
-    }
-
-    empresas = crud.fetch_distinct("empresa")
-    setores = crud.fetch_distinct("setor")
-    projetos = crud.fetch_distinct("projeto")
-    fornecedores = crud.fetch_distinct("fornecedor")
-    situacoes = STATUS_LIST
-
-    with st.sidebar.expander("Filtros avançados", expanded=False):
-        empresa = st.multiselect("Empresa", empresas, key="f_empresa")
-        setor = st.multiselect("Setor", setores, key="f_setor")
-        projeto = st.multiselect("Projeto", projetos, key="f_projeto")
-        fornecedor = st.multiselect("Fornecedor", fornecedores, key="f_fornecedor")
-        situacao = st.multiselect("Situação", situacoes, key="f_situacao")
-        data_sol = st.date_input("Período Data Solicitação", value=(), key="f_data_solicitacao")
-        data_compra = st.date_input("Período Data Compra", value=(), key="f_data_compra")
-        texto = st.text_input("Busca texto", key="f_texto")
-
-    situacoes_aplicadas = situacao or preset_map[preset]
-
-    filters = {
-        "empresa": empresa,
-        "setor": setor,
-        "projeto": projeto,
-        "fornecedor": fornecedor,
-        "situacao": situacoes_aplicadas,
-        "texto": texto.strip() or None,
-    }
-
-    if isinstance(data_sol, tuple) and len(data_sol) == 2:
-        filters["data_solicitacao"] = (data_sol[0].isoformat(), data_sol[1].isoformat())
-    if isinstance(data_compra, tuple) and len(data_compra) == 2:
-        filters["data_compra"] = (data_compra[0].isoformat(), data_compra[1].isoformat())
-
-    return filters
-
-
-filters = render_filters()
-
-st.sidebar.markdown("---")
-with st.sidebar.expander("Admin (MVP)", expanded=False):
-    st.caption("Use apenas em fase de criação/homologação.")
-    st.warning("Essa ação apaga TODAS as requisições, orçamentos, anexos e aprovações.")
-    confirm_reset = st.checkbox("Entendo que essa ação é irreversível", key="confirm_reset_all")
-    confirm_text = st.text_input(
-        "Para confirmar, digite LIMPAR TUDO",
-        key="confirm_reset_all_text",
-        placeholder="LIMPAR TUDO",
-    )
-    if st.button("🗑️ Limpar base inteira", key="btn_reset_all_data"):
-        if not confirm_reset or confirm_text.strip().upper() != "LIMPAR TUDO":
-            st.error("Confirmação inválida. Marque a caixa e digite exatamente: LIMPAR TUDO")
-        else:
-            crud.delete_all_data()
-            st.session_state.pop("selected_req_id", None)
-            st.session_state.pop("delete_id_pending", None)
-            st.success("Base limpa com sucesso.")
-            st.rerun()
-
-
-def render_requisicao_form(prefix: str, data: dict | None = None) -> dict:
-    data = data or {}
-
-    projetos_existentes = crud.list_projetos()
-    empresas_existentes = crud.fetch_distinct("empresa")
-    setores_existentes = crud.fetch_distinct("setor")
-
-    projeto_padrao = str(data.get("projeto") or "").strip().upper()
-    empresa_padrao = str(data.get("empresa") or "").strip().upper()
-    setor_padrao = str(data.get("setor") or "").strip().upper()
-
-    projeto_opcoes = ["(Sem projeto)"] + projetos_existentes + ["+ Novo projeto"]
-    empresa_opcoes = empresas_existentes + ["+ Nova empresa"] if empresas_existentes else ["+ Nova empresa"]
-    setor_opcoes = setores_existentes + ["+ Novo setor"] if setores_existentes else ["+ Novo setor"]
-
-    default_projeto = projeto_padrao if projeto_padrao in projetos_existentes else ("+ Novo projeto" if projeto_padrao else "(Sem projeto)")
-    default_empresa = empresa_padrao if empresa_padrao in empresas_existentes else "+ Nova empresa"
-    default_setor = setor_padrao if setor_padrao in setores_existentes else "+ Novo setor"
-
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        empresa_sel = st.selectbox("Empresa*", options=empresa_opcoes, index=empresa_opcoes.index(default_empresa), key=f"{prefix}_empresa_sel")
-        empresa_nova = st.text_input(
-            "Nova empresa",
-            value="" if default_empresa != "+ Nova empresa" else empresa_padrao,
-            key=f"{prefix}_empresa_nova",
-        )
-
-        setor_sel = st.selectbox("Setor", options=setor_opcoes, index=setor_opcoes.index(default_setor), key=f"{prefix}_setor_sel")
-        setor_novo = st.text_input(
-            "Novo setor",
-            value="" if default_setor != "+ Novo setor" else setor_padrao,
-            key=f"{prefix}_setor_novo",
-        )
-
-        requisicao = st.text_input("Requisição", value=data.get("requisicao", ""), key=f"{prefix}_requisicao")
-        data_solicitacao = st.date_input(
-            "Data Solicitação*",
-            value=parse_date_input(data.get("data_solicitacao")) or date.today(),
-            key=f"{prefix}_data_solicitacao",
-        )
-
-    with col2:
-        projeto_escolhido = st.selectbox(
-            "Projeto",
-            options=projeto_opcoes,
-            index=projeto_opcoes.index(default_projeto),
-            key=f"{prefix}_projeto_sel",
-            help="Selecione um projeto existente ou crie um novo.",
-        )
-        projeto_novo_default = projeto_padrao if default_projeto == "+ Novo projeto" else ""
-        projeto_novo = st.text_input("Novo projeto", value=projeto_novo_default, key=f"{prefix}_projeto_novo")
-
-        sem_data_compra = st.checkbox(
-            "Sem Data Compra",
-            value=data.get("data_compra") in (None, ""),
-            key=f"{prefix}_sem_data_compra",
-        )
-        data_compra = st.date_input(
-            "Data Compra",
-            value=(parse_date_input(data.get("data_compra")) or date.today()),
-            key=f"{prefix}_data_compra",
-            disabled=sem_data_compra,
-        )
-        fornecedor = st.text_input("Fornecedor", value=data.get("fornecedor", ""), key=f"{prefix}_fornecedor")
-
-    with col3:
-        qtde = st.number_input("Qtde", min_value=0, step=1, value=to_int(data.get("qtde")), key=f"{prefix}_qtde")
-        item = st.text_input("Item*", value=data.get("item", ""), key=f"{prefix}_item")
-        entrega = st.text_input("Entrega", value=data.get("entrega", ""), key=f"{prefix}_entrega")
-        situacao = st.selectbox(
-            "Situação",
-            options=STATUS_LIST,
-            index=STATUS_LIST.index(data.get("situacao")) if data.get("situacao") in STATUS_LIST else 0,
-            key=f"{prefix}_situacao",
-        )
-        valor = st.text_input("Valor", value=to_str(data.get("valor")), key=f"{prefix}_valor")
-        valor_desconto = st.text_input("Valor Desconto", value=to_str(data.get("valor_desconto")), key=f"{prefix}_valor_desconto")
-        nf = st.text_input("NF", value=data.get("nf", ""), key=f"{prefix}_nf")
-        observacao = st.text_area("Observação", value=data.get("observacao", ""), key=f"{prefix}_observacao")
-
-    if projeto_escolhido == "+ Novo projeto":
-        projeto_final = projeto_novo.strip().upper()
-    elif projeto_escolhido == "(Sem projeto)":
-        projeto_final = ""
-    else:
-        projeto_final = projeto_escolhido.strip().upper()
-
-    empresa_final = empresa_nova.strip().upper() if empresa_sel == "+ Nova empresa" else empresa_sel.strip().upper()
-    setor_final = setor_novo.strip().upper() if setor_sel == "+ Novo setor" else setor_sel.strip().upper()
-
-    return {
-        "empresa": empresa_final,
-        "setor": setor_final,
-        "projeto": projeto_final,
-        "requisicao": requisicao.strip(),
-        "data_solicitacao": data_solicitacao.isoformat() if isinstance(data_solicitacao, date) else None,
-        "data_compra": None if sem_data_compra else data_compra.isoformat(),
-        "fornecedor": fornecedor.strip(),
-        "qtde": qtde,
-        "item": item.strip(),
-        "entrega": entrega.strip(),
-        "situacao": situacao,
-        "valor": excel_io.parse_decimal(valor),
-        "valor_desconto": excel_io.parse_decimal(valor_desconto),
-        "nf": nf.strip(),
-        "observacao": observacao.strip(),
-    }
 
 
 def parse_date_input(value: str | None) -> date | None:
@@ -261,65 +94,306 @@ def validate_payload(payload: dict) -> list[str]:
     return errors
 
 
-def highlight_status(df: pd.DataFrame) -> pd.DataFrame:
-    colors = []
-    for status_value in df.get("situacao", []):
-        status = str(status_value or "").strip().upper()
-        if status in {"CONCLUÍDO", "ENTREGUE"}:
-            color = "#D1F7C4"
-        elif status == "COMPRADO":
-            color = "#FFF3BF"
-        else:
-            color = "#FFD6D6"
-        colors.append([f"background-color: {color}"] * len(df.columns))
-    return pd.DataFrame(colors, index=df.index, columns=df.columns)
-
-
-def build_payload_from_row(row: pd.Series, original: pd.Series) -> dict:
-    payload = {col: original.get(col) for col in COLUMN_ORDER}
-    payload.update(
-        {
-            "empresa": excel_io.normalize_text(row.get("empresa")),
-            "setor": excel_io.normalize_text(row.get("setor")),
-            "projeto": excel_io.normalize_text(row.get("projeto")),
-            "requisicao": str(row.get("requisicao") or "").strip(),
-            "data_solicitacao": excel_io.parse_date(row.get("data_solicitacao")),
-            "data_compra": excel_io.parse_date(row.get("data_compra")),
-            "fornecedor": excel_io.normalize_text(row.get("fornecedor")),
-            "qtde": excel_io.parse_int(row.get("qtde")),
-            "item": str(row.get("item") or "").strip(),
-            "entrega": str(row.get("entrega") or "").strip(),
-            "situacao": excel_io.normalize_text(row.get("situacao")),
-            "valor": excel_io.parse_decimal(row.get("valor")),
-            "valor_desconto": excel_io.parse_decimal(row.get("valor_desconto")),
-            "nf": str(row.get("nf") or "").strip() or None,
-            "observacao": str(row.get("observacao") or "").strip(),
-        }
-    )
-    return payload
-
-
-st.title("Sistema de Controle de Requisições")
-
-
-def resolve_selected_req_id(selected_rows: object, fallback_id: int) -> int:
+def resolve_selected_req_id(selected_rows: object) -> int | None:
     if isinstance(selected_rows, pd.DataFrame):
         if selected_rows.empty:
-            return fallback_id
+            return None
         return int(selected_rows.iloc[0]["id"])
     if isinstance(selected_rows, list):
         if not selected_rows:
-            return fallback_id
+            return None
         row0 = selected_rows[0]
         if isinstance(row0, dict) and row0.get("id") is not None:
             return int(row0["id"])
         if isinstance(row0, pd.Series) and row0.get("id") is not None:
             return int(row0["id"])
-        return fallback_id
+        return None
     if isinstance(selected_rows, dict) and selected_rows.get("id") is not None:
         return int(selected_rows["id"])
-    return fallback_id
+    return None
 
+
+# ---------------------------------------------------------------------------
+# Sidebar: Filtros
+# ---------------------------------------------------------------------------
+
+def render_filters() -> dict:
+    st.sidebar.header("Filtros")
+
+    # ── Contadores por preset ─────────────────────────────────────────────
+    _ct = crud.count_requisicoes({})
+    _cp = crud.count_requisicoes({"situacao": ["Solicitado"]})
+    _cc = crud.count_requisicoes({"situacao": ["Comprado"]})
+    _cn = crud.count_requisicoes({"situacao": ["Concluído"]})
+
+    _preset_labels = [
+        f"Todos ({_ct})",
+        f"Pendentes ({_cp})",
+        f"Comprados ({_cc})",
+        f"Concluídos ({_cn})",
+    ]
+    _preset_situacoes = [[], ["Solicitado"], ["Comprado"], ["Concluído"]]
+
+    preset_label = st.sidebar.radio(
+        "Visualização rápida",
+        _preset_labels,
+        horizontal=False,
+        key="f_preset",
+    )
+    preset_idx = _preset_labels.index(preset_label) if preset_label in _preset_labels else 0
+    preset_situacoes = _preset_situacoes[preset_idx]
+
+    if st.sidebar.button("🔄 Limpar Filtros", use_container_width=True):
+        for key in [
+            "f_empresa", "f_setor", "f_projeto", "f_fornecedor", "f_situacao",
+            "f_data_solicitacao", "f_data_compra", "f_texto", "f_preset",
+            "_last_dialog_req_id",
+        ]:
+            st.session_state.pop(key, None)
+        st.rerun()
+
+    # ── Busca global sempre visível ───────────────────────────────────────
+    texto = st.sidebar.text_input(
+        "🔍 Buscar item, fornecedor, req...",
+        key="f_texto",
+        placeholder="Digite para filtrar...",
+    )
+
+    # ── Atalhos de período ────────────────────────────────────────────────
+    st.sidebar.caption("Período rápido:")
+    _sc1, _sc2 = st.sidebar.columns(2)
+    _today = date.today()
+    if _sc1.button("Hoje", use_container_width=True):
+        st.session_state["f_data_solicitacao"] = (_today, _today)
+        st.rerun()
+    if _sc2.button("Esta semana", use_container_width=True):
+        _ini_sem = _today - timedelta(days=_today.weekday())
+        st.session_state["f_data_solicitacao"] = (_ini_sem, _today)
+        st.rerun()
+    if _sc1.button("Este mês", use_container_width=True):
+        st.session_state["f_data_solicitacao"] = (date(_today.year, _today.month, 1), _today)
+        st.rerun()
+    if _sc2.button("Último mês", use_container_width=True):
+        _primeiro_mes = date(_today.year, _today.month, 1)
+        _ultimo_mes_ant = _primeiro_mes - timedelta(days=1)
+        st.session_state["f_data_solicitacao"] = (
+            date(_ultimo_mes_ant.year, _ultimo_mes_ant.month, 1),
+            _ultimo_mes_ant,
+        )
+        st.rerun()
+
+    # ── Filtros avançados ─────────────────────────────────────────────────
+    empresas = crud.fetch_distinct("empresa")
+    setores = crud.fetch_distinct("setor")
+    projetos = crud.fetch_distinct("projeto")
+    fornecedores = crud.fetch_distinct("fornecedor")
+
+    with st.sidebar.expander("Filtros avançados", expanded=False):
+        empresa = st.multiselect("Empresa", empresas, key="f_empresa")
+        setor = st.multiselect("Setor", setores, key="f_setor")
+        projeto = st.multiselect("Projeto", projetos, key="f_projeto")
+        fornecedor = st.multiselect("Fornecedor", fornecedores, key="f_fornecedor")
+        situacao = st.multiselect("Situação", STATUS_LIST, key="f_situacao")
+        data_sol = st.date_input(
+            "Período Data Solicitação",
+            value=st.session_state.get("f_data_solicitacao", ()),
+            key="f_data_solicitacao",
+        )
+        data_compra = st.date_input("Período Data Compra", value=(), key="f_data_compra")
+
+    situacoes_aplicadas = situacao or preset_situacoes
+
+    filters: dict = {
+        "empresa": empresa,
+        "setor": setor,
+        "projeto": projeto,
+        "fornecedor": fornecedor,
+        "situacao": situacoes_aplicadas,
+        "texto": texto.strip() or None,
+    }
+
+    if isinstance(data_sol, tuple) and len(data_sol) == 2:
+        filters["data_solicitacao"] = (data_sol[0].isoformat(), data_sol[1].isoformat())
+    if isinstance(data_compra, tuple) and len(data_compra) == 2:
+        filters["data_compra"] = (data_compra[0].isoformat(), data_compra[1].isoformat())
+
+    # ── Indicador de filtros ativos ───────────────────────────────────────
+    _label_map = {
+        "empresa": "Empresa", "setor": "Setor", "projeto": "Projeto",
+        "fornecedor": "Fornecedor", "situacao": "Situação",
+        "texto": "Busca", "data_solicitacao": "Data Sol.", "data_compra": "Data Compra",
+    }
+    _ativos = [_label_map.get(k, k) for k, v in filters.items() if v and v != [] and v is not None]
+    if _ativos:
+        st.sidebar.caption(f"🔍 {len(_ativos)} filtro(s): {', '.join(_ativos)}")
+
+    return filters
+
+
+filters = render_filters()
+
+st.sidebar.markdown("---")
+with st.sidebar.expander("Admin (MVP)", expanded=False):
+    st.caption("Use apenas em fase de criação/homologação.")
+    st.warning("Essa ação apaga TODAS as requisições, orçamentos, anexos e aprovações.")
+    confirm_reset = st.checkbox("Entendo que essa ação é irreversível", key="confirm_reset_all")
+    confirm_text = st.text_input(
+        "Para confirmar, digite LIMPAR TUDO",
+        key="confirm_reset_all_text",
+        placeholder="LIMPAR TUDO",
+    )
+    if st.button("🗑️ Limpar base inteira", key="btn_reset_all_data"):
+        if not confirm_reset or confirm_text.strip().upper() != "LIMPAR TUDO":
+            st.error("Confirmação inválida. Marque a caixa e digite exatamente: LIMPAR TUDO")
+        else:
+            crud.delete_all_data()
+            st.session_state.pop("selected_req_id", None)
+            st.session_state.pop("delete_id_pending", None)
+            st.success("Base limpa com sucesso.")
+            st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# Formulário de Requisição
+# ---------------------------------------------------------------------------
+
+def render_requisicao_form(prefix: str, data: dict | None = None) -> dict:
+    data = data or {}
+
+    projetos_existentes = crud.list_projetos()
+    empresas_existentes = crud.fetch_distinct("empresa")
+    setores_existentes = crud.fetch_distinct("setor")
+
+    projeto_padrao = str(data.get("projeto") or "").strip().upper()
+    empresa_padrao = str(data.get("empresa") or "").strip().upper()
+    setor_padrao = str(data.get("setor") or "").strip().upper()
+
+    # Opções dos selects
+    empresa_opcoes = empresas_existentes + ["+ Nova empresa"] if empresas_existentes else ["+ Nova empresa"]
+    setor_opcoes = setores_existentes + ["+ Novo setor"] if setores_existentes else ["+ Novo setor"]
+    projeto_opcoes = ["(Sem projeto)"] + projetos_existentes + ["+ Novo projeto"]
+
+    default_empresa = empresa_padrao if empresa_padrao in empresas_existentes else "+ Nova empresa"
+    default_setor = setor_padrao if setor_padrao in setores_existentes else "+ Novo setor"
+    default_projeto = (
+        projeto_padrao if projeto_padrao in projetos_existentes
+        else ("+ Novo projeto" if projeto_padrao else "(Sem projeto)")
+    )
+
+    # col1: Identificação | col2: Logística | col3: Item e Valores
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.markdown("**Identificação**")
+        empresa_sel = st.selectbox(
+            "Empresa*",
+            options=empresa_opcoes,
+            index=empresa_opcoes.index(default_empresa),
+            key=f"{prefix}_empresa_sel",
+        )
+        if empresa_sel == "+ Nova empresa":
+            empresa_final = st.text_input(
+                "Nome da nova empresa",
+                value=empresa_padrao if default_empresa == "+ Nova empresa" else "",
+                key=f"{prefix}_empresa_nova",
+            ).strip().upper()
+        else:
+            empresa_final = empresa_sel.strip().upper()
+
+        setor_sel = st.selectbox(
+            "Setor",
+            options=setor_opcoes,
+            index=setor_opcoes.index(default_setor),
+            key=f"{prefix}_setor_sel",
+        )
+        if setor_sel == "+ Novo setor":
+            setor_final = st.text_input(
+                "Nome do novo setor",
+                value=setor_padrao if default_setor == "+ Novo setor" else "",
+                key=f"{prefix}_setor_novo",
+            ).strip().upper()
+        else:
+            setor_final = setor_sel.strip().upper()
+
+        projeto_sel = st.selectbox(
+            "Projeto",
+            options=projeto_opcoes,
+            index=projeto_opcoes.index(default_projeto),
+            key=f"{prefix}_projeto_sel",
+            help="Selecione um projeto existente ou crie um novo.",
+        )
+        if projeto_sel == "+ Novo projeto":
+            projeto_final = st.text_input(
+                "Nome do novo projeto",
+                value=projeto_padrao if default_projeto == "+ Novo projeto" else "",
+                key=f"{prefix}_projeto_novo",
+            ).strip().upper()
+        elif projeto_sel == "(Sem projeto)":
+            projeto_final = ""
+        else:
+            projeto_final = projeto_sel.strip().upper()
+
+    with col2:
+        st.markdown("**Logística**")
+        requisicao = st.text_input("Requisição", value=data.get("requisicao", ""), key=f"{prefix}_requisicao")
+        data_solicitacao = st.date_input(
+            "Data Solicitação*",
+            value=parse_date_input(data.get("data_solicitacao")) or date.today(),
+            key=f"{prefix}_data_solicitacao",
+        )
+        sem_data_compra = st.checkbox(
+            "Sem Data Compra",
+            value=data.get("data_compra") in (None, ""),
+            key=f"{prefix}_sem_data_compra",
+        )
+        data_compra = st.date_input(
+            "Data Compra",
+            value=(parse_date_input(data.get("data_compra")) or date.today()),
+            key=f"{prefix}_data_compra",
+            disabled=sem_data_compra,
+        )
+        fornecedor = st.text_input("Fornecedor", value=data.get("fornecedor", ""), key=f"{prefix}_fornecedor")
+
+    with col3:
+        st.markdown("**Item e Valores**")
+        item = st.text_input("Item*", value=data.get("item", ""), key=f"{prefix}_item")
+        qtde = st.number_input("Qtde", min_value=0, step=1, value=to_int(data.get("qtde")), key=f"{prefix}_qtde")
+        entrega = st.text_input("Entrega", value=data.get("entrega", ""), key=f"{prefix}_entrega")
+        situacao = st.selectbox(
+            "Situação",
+            options=STATUS_LIST,
+            index=STATUS_LIST.index(data.get("situacao")) if data.get("situacao") in STATUS_LIST else 0,
+            key=f"{prefix}_situacao",
+        )
+        valor = st.text_input("Valor", value=to_str(data.get("valor")), key=f"{prefix}_valor")
+        valor_desconto = st.text_input(
+            "Valor Desconto", value=to_str(data.get("valor_desconto")), key=f"{prefix}_valor_desconto"
+        )
+        nf = st.text_input("NF", value=data.get("nf", ""), key=f"{prefix}_nf")
+        observacao = st.text_area("Observação", value=data.get("observacao", ""), key=f"{prefix}_observacao")
+
+    return {
+        "empresa": empresa_final,
+        "setor": setor_final,
+        "projeto": projeto_final,
+        "requisicao": (requisicao or "").strip(),
+        "data_solicitacao": data_solicitacao.isoformat() if isinstance(data_solicitacao, date) else None,
+        "data_compra": None if sem_data_compra else data_compra.isoformat(),
+        "fornecedor": (fornecedor or "").strip(),
+        "qtde": qtde,
+        "item": (item or "").strip(),
+        "entrega": (entrega or "").strip(),
+        "situacao": situacao,
+        "valor": excel_io.parse_decimal(valor),
+        "valor_desconto": excel_io.parse_decimal(valor_desconto),
+        "nf": (nf or "").strip(),
+        "observacao": (observacao or "").strip(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Dialog de Detalhes
+# ---------------------------------------------------------------------------
 
 @st.dialog("Detalhes da Requisição", width="large")
 def open_requisicao_dialog(selected_req_id: int) -> None:
@@ -328,41 +402,50 @@ def open_requisicao_dialog(selected_req_id: int) -> None:
         st.warning("Requisição não encontrada.")
         return
 
-    tab_dados, tab_aprov, tab_arquivos = st.tabs(["📝 Dados", "✅ Aprovação", "📁 Arquivos"])
+    st.caption(f"ID {selected_req_id} · {req_data.get('empresa', '')} · {req_data.get('item', '')}")
+
+    tab_dados, tab_orc, tab_aprov, tab_arquivos = st.tabs(
+        ["📝 Editar Dados", "💰 Orçamentos", "✅ Aprovações", "📁 Anexos"]
+    )
 
     with tab_dados:
-        c1, c2 = st.columns(2)
-        with c1:
-            resumo_df = pd.DataFrame(
-                [{"Campo": DISPLAY_NAMES.get(col, col), "Valor": req_data.get(col)} for col in COLUMN_ORDER]
-            )
-            st.dataframe(resumo_df, use_container_width=True, hide_index=True)
-
-        with c2:
-            with st.form(f"edit_req_dialog_{selected_req_id}"):
-                payload = render_requisicao_form(f"edit_{selected_req_id}", req_data)
-                submitted_edit = st.form_submit_button("Salvar dados da requisição", use_container_width=True)
-                if submitted_edit:
-                    errors = validate_payload(payload)
-                    if errors:
-                        for err in errors:
-                            st.error(err)
-                    else:
-                        crud.update_requisicao(selected_req_id, payload)
-                        st.session_state.open_req_dialog = False
-                        st.toast("Requisição atualizada com sucesso.", icon="✅")
-                        st.rerun()
-
-            if st.button("Excluir requisição selecionada", key=f"btn_del_req_{selected_req_id}", use_container_width=True):
-                crud.delete_requisicao(selected_req_id)
-                st.session_state.open_req_dialog = False
+        payload = render_requisicao_form(f"edit_{selected_req_id}", req_data)
+        if st.button(
+            "💾 Salvar dados da requisição",
+            key=f"save_edit_{selected_req_id}",
+            use_container_width=True,
+            type="primary",
+        ):
+            errors = validate_payload(payload)
+            if errors:
+                for err in errors:
+                    st.error(err)
+            else:
+                crud.update_requisicao(selected_req_id, payload)
                 st.session_state.pop("selected_req_id", None)
-                st.toast("Requisição excluída.", icon="🗑️")
+                st.toast("Requisição atualizada com sucesso.", icon="✅")
                 st.rerun()
 
-        st.markdown("##### Orçamentos")
+        st.markdown("---")
+        if st.button(
+            "🗑️ Excluir esta requisição",
+            key=f"btn_del_req_{selected_req_id}",
+            use_container_width=True,
+            type="secondary",
+        ):
+            crud.delete_requisicao(selected_req_id)
+            st.session_state.pop("selected_req_id", None)
+            st.toast("Requisição excluída.", icon="🗑️")
+            st.rerun()
+
+    with tab_orc:
         orcs = crud.list_orcamentos(selected_req_id)
-        st.dataframe(pd.DataFrame(orcs), use_container_width=True)
+        if orcs:
+            st.dataframe(pd.DataFrame(orcs), use_container_width=True, hide_index=True)
+        else:
+            st.info("Nenhum orçamento cadastrado para esta requisição.")
+
+        st.markdown("##### Adicionar Orçamento")
         with st.form(f"form_orcamento_dialog_{selected_req_id}"):
             oc1, oc2 = st.columns(2)
             fornecedor_orc = oc1.text_input("Fornecedor")
@@ -383,21 +466,34 @@ def open_requisicao_dialog(selected_req_id: int) -> None:
                         "observacao": obs_orc.strip(),
                     }
                 )
-                st.session_state.open_req_dialog = False
                 st.toast("Orçamento adicionado.", icon="✅")
                 st.rerun()
+
         if orcs:
-            del_orc = st.selectbox("Excluir orçamento (ID)", [o["id"] for o in orcs], key=f"del_orc_{selected_req_id}")
-            if st.button("Excluir orçamento", key=f"btn_del_orc_{selected_req_id}", use_container_width=True):
+            st.markdown("##### Excluir Orçamento")
+            del_orc = st.selectbox(
+                "Selecione o orçamento pelo ID",
+                [o["id"] for o in orcs],
+                key=f"del_orc_{selected_req_id}",
+            )
+            if st.button("Excluir orçamento selecionado", key=f"btn_del_orc_{selected_req_id}", use_container_width=True):
                 crud.delete_orcamento(int(del_orc))
-                st.session_state.open_req_dialog = False
                 st.toast("Orçamento excluído.", icon="🗑️")
                 st.rerun()
 
     with tab_aprov:
         aps = crud.list_aprovacoes(selected_req_id)
-        st.dataframe(pd.DataFrame(aps), use_container_width=True)
-        acao = st.selectbox("Ação", ["APROVADO", "REPROVADO", "DEVOLVIDO", "COMENTÁRIO"], key=f"acao_{selected_req_id}")
+        if aps:
+            st.dataframe(pd.DataFrame(aps), use_container_width=True, hide_index=True)
+        else:
+            st.info("Nenhuma ação de aprovação registrada.")
+
+        st.markdown("##### Registrar Ação")
+        acao = st.selectbox(
+            "Ação",
+            ["APROVADO", "REPROVADO", "DEVOLVIDO", "COMENTÁRIO"],
+            key=f"acao_{selected_req_id}",
+        )
         aprovador = st.text_input("Aprovador", value="GESTOR", key=f"apr_{selected_req_id}")
         comentario = st.text_area("Comentário", key=f"obs_apr_{selected_req_id}")
         if st.button("Registrar ação", key=f"btn_apr_{selected_req_id}", use_container_width=True):
@@ -410,17 +506,26 @@ def open_requisicao_dialog(selected_req_id: int) -> None:
                 }
             )
             if acao == "APROVADO" and req_data:
-                req_data["situacao"] = "Comprado"
-                crud.update_requisicao(selected_req_id, req_data)
-            st.session_state.open_req_dialog = False
+                updated = dict(req_data)
+                updated["situacao"] = "Comprado"
+                crud.update_requisicao(selected_req_id, updated)
             st.toast("Ação de aprovação registrada.", icon="✅")
             st.rerun()
 
     with tab_arquivos:
         anexos = crud.list_anexos(selected_req_id)
-        st.dataframe(pd.DataFrame(anexos), use_container_width=True)
-        up = st.file_uploader("Enviar anexo", key=f"anexo_{selected_req_id}")
-        tipo_anexo = st.selectbox("Tipo", ["orcamento", "nf", "contrato", "outros"], key=f"tipo_{selected_req_id}")
+        if anexos:
+            st.dataframe(pd.DataFrame(anexos), use_container_width=True, hide_index=True)
+        else:
+            st.info("Nenhum anexo enviado.")
+
+        st.markdown("##### Enviar Anexo")
+        up = st.file_uploader("Selecione o arquivo", key=f"anexo_{selected_req_id}")
+        tipo_anexo = st.selectbox(
+            "Tipo de anexo",
+            ["orcamento", "nf", "contrato", "outros"],
+            key=f"tipo_{selected_req_id}",
+        )
         if st.button("Salvar anexo", key=f"btn_save_anexo_{selected_req_id}", use_container_width=True) and up is not None:
             crud.create_anexo(
                 {
@@ -433,102 +538,208 @@ def open_requisicao_dialog(selected_req_id: int) -> None:
                     "uploaded_by": "gestor",
                 }
             )
-            st.session_state.open_req_dialog = False
             st.toast("Anexo salvo.", icon="✅")
             st.rerun()
+
         if anexos:
-            anexo_id = st.selectbox("Baixar/Excluir anexo (ID)", [a["id"] for a in anexos], key=f"anexo_ops_{selected_req_id}")
+            st.markdown("##### Baixar / Excluir Anexo")
+            anexo_id = st.selectbox(
+                "Selecione pelo ID",
+                [a["id"] for a in anexos],
+                key=f"anexo_ops_{selected_req_id}",
+            )
             anexo = crud.get_anexo_conteudo(int(anexo_id))
             if anexo:
                 st.download_button(
-                    "Baixar anexo",
+                    "⬇️ Baixar anexo",
                     data=anexo["conteudo"],
                     file_name=anexo["nome_arquivo"],
                     mime=anexo.get("mime_type") or "application/octet-stream",
                     key=f"dl_{selected_req_id}_{anexo_id}",
                     use_container_width=True,
                 )
-            if st.button("Excluir anexo", key=f"del_anexo_{selected_req_id}", use_container_width=True):
+            if st.button("🗑️ Excluir anexo", key=f"del_anexo_{selected_req_id}", use_container_width=True):
                 crud.delete_anexo(int(anexo_id))
-                st.session_state.open_req_dialog = False
                 st.toast("Anexo excluído.", icon="🗑️")
                 st.rerun()
 
 
-aba_dashboard, aba_requisicoes, aba_projetos, aba_importar = st.tabs([
-    "Dashboard",
-    "Requisições",
-    "Projetos",
-    "Importar",
+# ---------------------------------------------------------------------------
+# Main App
+# ---------------------------------------------------------------------------
+
+st.title("Sistema de Controle de Requisições")
+
+_badge_count = crud.count_requisicoes(filters)
+
+aba_dashboard, aba_requisicoes, aba_analises, aba_projetos, aba_importar = st.tabs([
+    "📊 Dashboard",
+    f"📋 Requisições ({_badge_count})",
+    "📈 Análises",
+    "📁 Projetos",
+    "📥 Importar",
 ])
 
+# ---- Dashboard ----
 with aba_dashboard:
-    st.subheader("Métricas")
+    import plotly.express as px
+
+    st.subheader("Visão Geral")
     df_metrics = metrics.fetch_dataframe(filters)
 
-    total_gasto = metrics.total_gasto(df_metrics)
-    valor_total = (df_metrics.get("valor", pd.Series(dtype=float)).fillna(0)).sum() if not df_metrics.empty else 0.0
-    valor_desconto_total = (df_metrics.get("valor_desconto", pd.Series(dtype=float)).fillna(0)).sum() if not df_metrics.empty else 0.0
+    # Cálculos principais
+    _valor_total = float(df_metrics["valor"].fillna(0).sum()) if not df_metrics.empty else 0.0
+    _desconto_total = float(df_metrics["valor_desconto"].fillna(0).sum()) if not df_metrics.empty else 0.0
+    _total_reqs = len(df_metrics)
+    _em_aberto = metrics.valor_em_aberto(df_metrics)
+    _ticket = metrics.ticket_medio(df_metrics)
+    _tempo_med = metrics.tempo_medio_atendimento(df_metrics)
+    _saving_pct = (_desconto_total / _valor_total * 100) if _valor_total else 0.0
 
-    pendentes_mask = df_metrics.get("situacao", pd.Series(dtype=str)).fillna("").str.upper().eq("SOLICITADO") if not df_metrics.empty else pd.Series(dtype=bool)
-    pendentes_df = df_metrics[pendentes_mask] if not df_metrics.empty and not pendentes_mask.empty else pd.DataFrame()
-    total_aberto = ((pendentes_df.get("valor", pd.Series(dtype=float)).fillna(0)) - (pendentes_df.get("valor_desconto", pd.Series(dtype=float)).fillna(0))).sum() if not pendentes_df.empty else 0.0
-    qtd_pendentes = int(len(pendentes_df))
-    saving_pct = (valor_desconto_total / valor_total * 100) if valor_total else 0.0
+    # --- Bloco 1: KPIs principais ---
+    k1, k2, k3, k4, k5, k6 = st.columns(6)
+    k1.metric("📦 Total de Requisições", str(_total_reqs))
+    k2.metric("💰 Valor Total", format_currency(_valor_total))
+    k3.metric("💼 Em Aberto", format_currency(_em_aberto))
+    k4.metric("🎯 Ticket Médio", format_currency(_ticket))
+    k5.metric(
+        "⏱️ Tempo Médio",
+        f"{_tempo_med:.1f} dias" if _tempo_med else "—",
+    )
+    k6.metric(
+        "📉 Saving",
+        f"{_saving_pct:.2f}%" if _saving_pct else "—",
+    )
 
-    with st.container():
-        k1, k2, k3, k4 = st.columns(4)
-        k1.metric("💰 Total Gasto", format_currency(total_gasto))
-        k2.metric("📌 Em Aberto", format_currency(float(total_aberto)))
-        k3.metric("🧾 Pedidos Pendentes", str(qtd_pendentes))
-        k4.metric("📉 Saving", f"{saving_pct:.2f}%")
+    st.markdown("---")
 
+    # --- Bloco 2: Breakdown por status ---
+    st.markdown("**Situação das Requisições**")
+    df_sit = metrics.contagem_por_situacao(df_metrics)
+    if not df_sit.empty:
+        _status_cols = st.columns(len(df_sit))
+        for i, row in df_sit.iterrows():
+            _status_cols[i % len(_status_cols)].metric(
+                label=str(row["situacao"] or "Sem status"),
+                value=str(int(row["quantidade"])),
+                delta=format_currency(float(row["valor_total"])),
+                delta_color="off",
+            )
+    else:
+        st.info("Sem dados de situação.")
+
+    st.markdown("---")
+
+    # --- Bloco 3: Gráficos ---
+    gc1, gc2 = st.columns(2)
+    with gc1:
+        st.markdown("**Valor por Status**")
+        if not df_sit.empty:
+            fig_sit = px.bar(
+                df_sit.sort_values("valor_total"),
+                x="valor_total",
+                y="situacao",
+                orientation="h",
+                labels={"valor_total": "Valor (R$)", "situacao": ""},
+                color="situacao",
+                color_discrete_sequence=px.colors.qualitative.Set2,
+            )
+            fig_sit.update_layout(
+                showlegend=False,
+                margin=dict(l=0, r=0, t=10, b=0),
+                height=300,
+            )
+            st.plotly_chart(fig_sit, use_container_width=True)
+        else:
+            st.info("Sem dados.")
+
+    with gc2:
+        st.markdown("**Top 10 Fornecedores por Valor**")
+        df_top_forn = metrics.top_fornecedores(df_metrics, n=10)
+        if not df_top_forn.empty:
+            fig_forn = px.bar(
+                df_top_forn.sort_values("valor_total"),
+                x="valor_total",
+                y="fornecedor",
+                orientation="h",
+                labels={"valor_total": "Valor (R$)", "fornecedor": ""},
+                color_discrete_sequence=["#4C72B0"],
+            )
+            fig_forn.update_layout(
+                showlegend=False,
+                margin=dict(l=0, r=0, t=10, b=0),
+                height=300,
+            )
+            st.plotly_chart(fig_forn, use_container_width=True)
+        else:
+            st.info("Sem dados.")
+
+    st.markdown("---")
+
+    # --- Bloco 4: Tabelas resumo ---
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("**Total por Empresa**")
-        st.dataframe(metrics.total_por_empresa(df_metrics), use_container_width=True)
+        df_emp = metrics.total_por_empresa(df_metrics)
+        if not df_emp.empty:
+            df_emp = df_emp.sort_values("total", ascending=False)
+            df_emp.columns = ["Empresa", "Total (R$)"]
+            df_emp["Total (R$)"] = df_emp["Total (R$)"].apply(format_currency)
+        st.dataframe(df_emp, use_container_width=True, hide_index=True)
     with col2:
         st.markdown("**Total por Fornecedor**")
-        st.dataframe(metrics.total_por_fornecedor(df_metrics), use_container_width=True)
+        df_forn_tab = metrics.total_por_fornecedor(df_metrics)
+        if not df_forn_tab.empty:
+            df_forn_tab = df_forn_tab.sort_values("total", ascending=False)
+            df_forn_tab.columns = ["Fornecedor", "Total (R$)"]
+            df_forn_tab["Total (R$)"] = df_forn_tab["Total (R$)"].apply(format_currency)
+        st.dataframe(df_forn_tab, use_container_width=True, hide_index=True)
 
-    if st.button("Exportar Excel", key="export_dashboard", use_container_width=True):
-        bytes_xlsx = excel_io.export_to_excel(df_metrics[COLUMN_ORDER])
-        st.download_button(
-            label="Baixar arquivo",
-            data=bytes_xlsx,
-            file_name=f"requisicoes_{pd.Timestamp.now():%Y%m%d_%H%M%S}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key="download_dashboard",
-            use_container_width=True,
-        )
+    st.markdown("---")
+    if st.button("📄 Exportar Excel", key="export_dashboard", use_container_width=True):
+        if not df_metrics.empty:
+            export_cols = [c for c in COLUMN_ORDER if c in df_metrics.columns]
+            bytes_xlsx = excel_io.export_to_excel(df_metrics[export_cols])
+            st.download_button(
+                label="⬇️ Baixar arquivo",
+                data=bytes_xlsx,
+                file_name=f"requisicoes_{pd.Timestamp.now():%Y%m%d_%H%M%S}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="download_dashboard",
+                use_container_width=True,
+            )
+        else:
+            st.info("Sem dados para exportar com os filtros atuais.")
 
+
+# ---- Requisições ----
 with aba_requisicoes:
     st.subheader("Requisições")
 
     with st.expander("➕ Criar Nova Requisição", expanded=False):
         with st.form("novo_form"):
-            payload = render_requisicao_form("novo")
+            payload_novo = render_requisicao_form("novo")
             submitted = st.form_submit_button("Criar requisição", use_container_width=True)
             if submitted:
-                errors = validate_payload(payload)
+                errors = validate_payload(payload_novo)
                 if errors:
                     for err in errors:
                         st.error(err)
                 else:
-                    crud.create_requisicao(payload)
+                    crud.create_requisicao(payload_novo)
                     st.toast("Requisição criada com sucesso.", icon="✅")
                     st.rerun()
 
     col_actions1, col_actions2 = st.columns([1, 1])
     with col_actions1:
-        if st.button("Atualizar tabela", use_container_width=True):
+        if st.button("🔃 Atualizar tabela", use_container_width=True):
             st.rerun()
     with col_actions2:
-        somente_pendentes = st.checkbox("Mostrar somente pendentes (Solicitado)", value=False)
+        ocultar_concluidos = st.checkbox("Ocultar Concluídos e Cancelados", value=False)
 
     req_filters = dict(filters)
-    if somente_pendentes:
-        req_filters["situacao"] = ["Solicitado"]
+    if ocultar_concluidos:
+        req_filters["situacao"] = ["Solicitado", "Cotação", "Aprovação", "Comprado"]
 
     total_registros = crud.count_requisicoes(req_filters)
     page_size = st.selectbox("Registros por página", [10, 20, 50], index=1)
@@ -537,18 +748,18 @@ with aba_requisicoes:
     offset = (pagina - 1) * page_size
 
     registros = crud.fetch_requisicoes(req_filters, limit=page_size, offset=offset)
-    df_edit = pd.DataFrame(registros)
+    df_view = pd.DataFrame(registros)
 
-    if not df_edit.empty:
-        editable_df = df_edit.copy()
-        editable_df.insert(0, "acoes", "📝")
+    if not df_view.empty:
         for col in ["data_solicitacao", "data_compra"]:
-            if col in editable_df.columns:
-                editable_df[col] = pd.to_datetime(editable_df[col], errors="coerce").dt.date
+            if col in df_view.columns:
+                df_view[col] = (
+                    pd.to_datetime(df_view[col], errors="coerce")
+                    .dt.strftime("%d/%m/%Y")
+                    .fillna("")
+                )
 
-        gb_edit = GridOptionsBuilder.from_dataframe(editable_df)
-        gb_edit.configure_default_column(editable=True, filter=True, sortable=True, resizable=True)
-        gb_edit.configure_column("acoes", editable=False, width=70, pinned="left", cellRenderer=JsCode(
+        action_renderer = JsCode(
             """
             class AcaoRenderer {
                 init(params) {
@@ -566,249 +777,510 @@ with aba_requisicoes:
                 getGui() { return this.eGui; }
             }
             """
-        ))
-        gb_edit.configure_column("id", editable=False, width=80)
-        gb_edit.configure_column("situacao", cellEditor="agSelectCellEditor", cellEditorParams={"values": STATUS_LIST})
-        gb_edit.configure_column("projeto", width=180)
-        gb_edit.configure_column("item", width=260)
-        gb_edit.configure_column("observacao", width=220)
-        gb_edit.configure_column("valor", type=["numericColumn"])
-        gb_edit.configure_column("valor_desconto", type=["numericColumn"])
-        gb_edit.configure_grid_options(
-        gb_edit.configure_selection("single", use_checkbox=False)
-        gb_edit.configure_grid_options(
+        )
+
+        row_style = JsCode(
+            """
+            function(params) {
+                const status = (params.data.situacao || '').toString().trim().toUpperCase();
+                if (status === 'SOLICITADO') return {backgroundColor: '#FFEBEE', color: '#C62828'};
+                if (status === 'COTA\u00c7\u00c3O')   return {backgroundColor: '#FFF3E0', color: '#BF360C'};
+                if (status === 'APROVA\u00c7\u00c3O') return {backgroundColor: '#FFFDE7', color: '#827717'};
+                if (status === 'COMPRADO')   return {backgroundColor: '#E8F5E9', color: '#2E7D32'};
+                if (status === 'CONCLU\u00cdDO') return {backgroundColor: '#A5D6A7', color: '#1B5E20'};
+                if (status === 'CANCELADO')  return {backgroundColor: '#EEEEEE', color: '#757575'};
+                return {backgroundColor: '#FFFFFF', color: '#343a40'};
+            }
+            """
+        )
+
+        # Exibe apenas as colunas essenciais; o resto fica no modal
+        _GRID_COLS = ["acoes", "id", "data_solicitacao", "empresa",
+                      "item", "fornecedor", "valor", "situacao"]
+        df_grid = df_view.copy()
+        df_grid.insert(0, "acoes", "📝")
+        df_grid = df_grid[[c for c in _GRID_COLS if c in df_grid.columns]]
+
+        gb = GridOptionsBuilder.from_dataframe(df_grid)
+        gb.configure_default_column(
+            editable=False, filter=True, sortable=True, resizable=True,
+            suppressSizeToFit=False,
+        )
+        gb.configure_column("acoes",            headerName=" ",
+                            editable=False, width=52, pinned="left",
+                            cellRenderer=action_renderer, suppressSizeToFit=True)
+        gb.configure_column("id",               headerName="ID",
+                            editable=False, width=65, suppressSizeToFit=True)
+        gb.configure_column("data_solicitacao", headerName="Dt. Solicitação",
+                            width=130, suppressSizeToFit=True)
+        gb.configure_column("empresa",          headerName="Empresa",   width=150)
+        gb.configure_column("item",             headerName="Item",      width=260)
+        gb.configure_column("fornecedor",       headerName="Fornecedor", width=160)
+        gb.configure_column("valor",            headerName="Valor (R$)",
+                            type=["numericColumn"], width=115)
+        gb.configure_column(
+            "situacao",
+            headerName="Status",
+            width=130,
+            suppressSizeToFit=True,
+            editable=True,
+            cellEditor="agSelectCellEditor",
+            cellEditorParams={"values": STATUS_LIST},
+        )
+        gb.configure_selection("single", use_checkbox=False)
+        gb.configure_grid_options(
             suppressRowClickSelection=True,
             rowSelection="single",
             rowHoverHighlight=True,
-            getRowStyle=JsCode(
-                """
-                function(params) {
-                    const status = (params.data.situacao || '').toString().trim().toUpperCase();
-                    if (status === 'ENTREGUE') return {backgroundColor: '#E8F7EE'};
-                    if (status === 'COMPRADO') return {backgroundColor: '#FFF7D6'};
-                    if (status === 'SOLICITADO') return {backgroundColor: '#F5F6F7'};
-                    return {backgroundColor: '#F8F8F8'};
-                }
-                """
-            ),
+            getRowStyle=row_style,
         )
 
-        grid_edit = AgGrid(
-            editable_df,
-            gridOptions=gb_edit.build(),
-            update_mode=GridUpdateMode.MODEL_CHANGED | GridUpdateMode.SELECTION_CHANGED,
+        grid_result = AgGrid(
+            df_grid,
+            gridOptions=gb.build(),
+            update_mode=GridUpdateMode.VALUE_CHANGED | GridUpdateMode.SELECTION_CHANGED,
             fit_columns_on_grid_load=True,
             allow_unsafe_jscode=True,
             theme="streamlit",
-            key="editor_requisicoes_v3",
-            key="editor_requisicoes_v4",
+            key="viewer_requisicoes_v2",
             height=520,
         )
 
-        if st.button("Salvar alterações da tabela", use_container_width=True):
-            edited_rows = pd.DataFrame(grid_edit.get("data", []))
-            changes = 0
-            for _, row in edited_rows.iterrows():
-                original = df_edit.loc[df_edit["id"] == row["id"]].iloc[0]
-                payload = build_payload_from_row(row, original)
-                if any(payload[col] != original.get(col) for col in COLUMN_ORDER):
-                    crud.update_requisicao(int(row["id"]), payload)
-                    changes += 1
-            if changes:
-                st.toast(f"{changes} requisições atualizadas.", icon="✅")
-                st.rerun()
-            else:
-                st.info("Nenhuma alteração detectada.")
-
-        fallback_id = int(df_edit.iloc[0]["id"])
-        selected_id = resolve_selected_req_id(grid_edit.get("selected_rows"), fallback_id)
-        st.session_state.selected_req_id = selected_id
-
-        selected_req_id = int(st.session_state.get("selected_req_id", fallback_id))
-        req_data = crud.get_by_id(selected_req_id)
-        if req_data is None:
-            selected_req_id = fallback_id
-            req_data = crud.get_by_id(selected_req_id)
-            st.session_state.selected_req_id = selected_req_id
-
-        st.sidebar.markdown("---")
-        st.sidebar.subheader(f"Detalhes da requisição #{selected_req_id}")
-        tab_dados, tab_aprov, tab_arquivos = st.sidebar.tabs(["📝 Dados", "✅ Aprovação", "📁 Arquivos"])
-
-        with tab_dados:
-            resumo_df = pd.DataFrame(
-                [{"Campo": DISPLAY_NAMES.get(col, col), "Valor": req_data.get(col)} for col in COLUMN_ORDER]
-            )
-            st.dataframe(resumo_df, use_container_width=True, hide_index=True)
-            with st.form(f"edit_req_sidebar_{selected_req_id}"):
-                payload = render_requisicao_form(f"edit_{selected_req_id}", req_data)
-                submitted_edit = st.form_submit_button("Salvar dados da requisição", use_container_width=True)
-                if submitted_edit:
-                    errors = validate_payload(payload)
-                    if errors:
-                        for err in errors:
-                            st.error(err)
-                    else:
-                        crud.update_requisicao(selected_req_id, payload)
-                        st.toast("Requisição atualizada com sucesso.", icon="✅")
-                        st.rerun()
-
-            if st.button("Excluir requisição selecionada", key=f"btn_del_req_{selected_req_id}", use_container_width=True):
-                st.session_state.delete_id_pending = selected_req_id
-            if st.session_state.get("delete_id_pending") == selected_req_id:
-                st.warning(f"Confirma excluir a requisição #{selected_req_id}?")
-                if st.button("Confirmar exclusão", key=f"confirm_del_req_{selected_req_id}", use_container_width=True):
-                    crud.delete_requisicao(selected_req_id)
-                    st.session_state.pop("delete_id_pending", None)
-                    st.session_state.pop("selected_req_id", None)
-                    st.toast("Requisição excluída.", icon="🗑️")
-                    st.rerun()
-                if st.button("Cancelar", key=f"cancel_del_req_{selected_req_id}", use_container_width=True):
-                    st.session_state.pop("delete_id_pending", None)
-
-            st.markdown("##### Orçamentos")
-            orcs = crud.list_orcamentos(selected_req_id)
-            st.dataframe(pd.DataFrame(orcs), use_container_width=True)
-            with st.form(f"form_orcamento_{selected_req_id}"):
-                fornecedor_orc = st.text_input("Fornecedor")
-                valor_orc = st.text_input("Valor")
-                prazo_orc = st.date_input("Prazo Entrega", value=None)
-                cond_orc = st.text_input("Condições de Pagamento")
-                status_orc = st.selectbox("Status orçamento", ["RECEBIDO", "APROVADO", "REJEITADO"])
-                obs_orc = st.text_area("Observação orçamento")
-                if st.form_submit_button("Adicionar orçamento", use_container_width=True):
-                    crud.create_orcamento(
-                        {
-                            "requisicao_id": selected_req_id,
-                            "fornecedor": excel_io.normalize_text(fornecedor_orc),
-                            "valor": excel_io.parse_decimal(valor_orc),
-                            "prazo_entrega": prazo_orc.isoformat() if prazo_orc else None,
-                            "condicoes_pagamento": cond_orc.strip(),
-                            "status_orcamento": status_orc,
-                            "observacao": obs_orc.strip(),
-                        }
-                    )
-                    st.toast("Orçamento adicionado.", icon="✅")
-                    st.rerun()
-            if orcs:
-                del_orc = st.selectbox("Excluir orçamento (ID)", [o["id"] for o in orcs], key=f"del_orc_{selected_req_id}")
-                if st.button("Excluir orçamento", key=f"btn_del_orc_{selected_req_id}", use_container_width=True):
-                    crud.delete_orcamento(int(del_orc))
-                    st.toast("Orçamento excluído.", icon="🗑️")
+        # ── Detectar mudança de status inline ────────────────────────────
+        df_returned = grid_result.get("data")
+        if df_returned is not None and not df_returned.empty and "id" in df_returned.columns:
+            for _, ret_row in df_returned.iterrows():
+                _rid = ret_row.get("id")
+                _new_sit = ret_row.get("situacao", "")
+                if _rid is None or not _new_sit:
+                    continue
+                _orig = df_grid.loc[df_grid["id"] == _rid, "situacao"]
+                if not _orig.empty and str(_orig.iloc[0]) != str(_new_sit):
+                    crud.update_requisicao(int(_rid), {"situacao": str(_new_sit)})
+                    st.toast(f"Status #{int(_rid)} → {_new_sit}", icon="✅")
+                    st.session_state.pop("_last_dialog_req_id", None)
                     st.rerun()
 
-        with tab_aprov:
-            aps = crud.list_aprovacoes(selected_req_id)
-            st.dataframe(pd.DataFrame(aps), use_container_width=True)
-            acao = st.selectbox("Ação", ["APROVADO", "REPROVADO", "DEVOLVIDO", "COMENTÁRIO"], key=f"acao_{selected_req_id}")
-            aprovador = st.text_input("Aprovador", value="GESTOR", key=f"apr_{selected_req_id}")
-            comentario = st.text_area("Comentário", key=f"obs_apr_{selected_req_id}")
-            if st.button("Registrar ação", key=f"btn_apr_{selected_req_id}", use_container_width=True):
-                crud.create_aprovacao(
-                    {
-                        "requisicao_id": selected_req_id,
-                        "acao": acao,
-                        "comentario": comentario.strip(),
-                        "aprovador": aprovador.strip() or "GESTOR",
-                    }
-                )
-                if acao == "APROVADO" and req_data:
-                    req_data["situacao"] = "Comprado"
-                    crud.update_requisicao(selected_req_id, req_data)
-                st.toast("Ação de aprovação registrada.", icon="✅")
-                st.rerun()
-
-        with tab_arquivos:
-            anexos = crud.list_anexos(selected_req_id)
-            st.dataframe(pd.DataFrame(anexos), use_container_width=True)
-            up = st.file_uploader("Enviar anexo", key=f"anexo_{selected_req_id}")
-            tipo_anexo = st.selectbox("Tipo", ["orcamento", "nf", "contrato", "outros"], key=f"tipo_{selected_req_id}")
-            if st.button("Salvar anexo", key=f"btn_save_anexo_{selected_req_id}", use_container_width=True) and up is not None:
-                crud.create_anexo(
-                    {
-                        "requisicao_id": selected_req_id,
-                        "orcamento_id": None,
-                        "tipo": tipo_anexo,
-                        "nome_arquivo": up.name,
-                        "mime_type": up.type,
-                        "conteudo": up.getvalue(),
-                        "uploaded_by": "gestor",
-                    }
-                )
-                st.toast("Anexo salvo.", icon="✅")
-                st.rerun()
-            if anexos:
-                anexo_id = st.selectbox("Baixar/Excluir anexo (ID)", [a["id"] for a in anexos], key=f"anexo_ops_{selected_req_id}")
-                anexo = crud.get_anexo_conteudo(int(anexo_id))
-                if anexo:
-                    st.download_button(
-                        "Baixar anexo",
-                        data=anexo["conteudo"],
-                        file_name=anexo["nome_arquivo"],
-                        mime=anexo.get("mime_type") or "application/octet-stream",
-                        key=f"dl_{selected_req_id}_{anexo_id}",
-                        use_container_width=True,
-                    )
-                if st.button("Excluir anexo", key=f"del_anexo_{selected_req_id}", use_container_width=True):
-                    crud.delete_anexo(int(anexo_id))
-                    st.toast("Anexo excluído.", icon="🗑️")
-                    st.rerun()
-        selected_rows = grid_edit.get("selected_rows")
-        if selected_rows is not None:
-            selected_id = resolve_selected_req_id(selected_rows, int(df_edit.iloc[0]["id"]))
-            if selected_id != st.session_state.get("selected_req_id"):
+        # ── Detectar seleção para abrir dialog ────────────────────────────
+        selected_rows = grid_result.get("selected_rows")
+        selected_id = resolve_selected_req_id(selected_rows)
+        if selected_id is not None:
+            if selected_id != st.session_state.get("_last_dialog_req_id"):
                 st.session_state.selected_req_id = selected_id
                 st.session_state.open_req_dialog = True
 
-        if st.session_state.get("open_req_dialog") and st.session_state.get("selected_req_id"):
+        if st.session_state.get("open_req_dialog") and st.session_state.get("selected_req_id") is not None:
             st.session_state.open_req_dialog = False
+            st.session_state["_last_dialog_req_id"] = st.session_state["selected_req_id"]
             open_requisicao_dialog(int(st.session_state["selected_req_id"]))
 
     else:
         st.info("Nenhum registro encontrado com os filtros atuais.")
 
-    if st.button("Exportar Excel", key="export_requisicoes", use_container_width=True):
+    st.markdown("---")
+    if st.button("📄 Exportar Excel", key="export_requisicoes", use_container_width=True):
         df_export = metrics.fetch_dataframe(req_filters)
-        bytes_xlsx = excel_io.export_to_excel(df_export[COLUMN_ORDER])
-        st.download_button(
-            label="Baixar arquivo",
-            data=bytes_xlsx,
-            file_name=f"requisicoes_{pd.Timestamp.now():%Y%m%d_%H%M%S}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key="download_requisicoes",
-            use_container_width=True,
-        )
+        if not df_export.empty:
+            export_cols = [c for c in COLUMN_ORDER if c in df_export.columns]
+            bytes_xlsx = excel_io.export_to_excel(df_export[export_cols])
+            st.download_button(
+                label="⬇️ Baixar arquivo",
+                data=bytes_xlsx,
+                file_name=f"requisicoes_{pd.Timestamp.now():%Y%m%d_%H%M%S}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="download_requisicoes",
+                use_container_width=True,
+            )
+        else:
+            st.info("Sem dados para exportar com os filtros atuais.")
 
 
+# ---- Análises ----
+with aba_analises:
+    import plotly.express as px  # noqa: F811 — already imported in dashboard block
+
+    st.subheader("Análises de Compras")
+
+    df_an = metrics.fetch_dataframe(filters)
+
+    if df_an.empty:
+        st.info("Nenhum dado disponível com os filtros atuais.")
+    else:
+        # ── Seção 1: Evolução Temporal ───────────────────────────────────────
+        st.markdown("### 📅 Evolução Temporal")
+        an_c1, an_c2 = st.columns(2)
+
+        with an_c1:
+            st.markdown("**Requisições por Mês (data de solicitação)**")
+            df_evol = metrics.evolucao_mensal(df_an, date_col="data_solicitacao")
+            if not df_evol.empty:
+                fig_evol = px.bar(
+                    df_evol,
+                    x="mes",
+                    y="quantidade",
+                    labels={"mes": "Mês", "quantidade": "Nº Requisições"},
+                    color_discrete_sequence=["#4C72B0"],
+                )
+                fig_evol.update_layout(margin=dict(l=0, r=0, t=10, b=0), height=280)
+                st.plotly_chart(fig_evol, use_container_width=True)
+            else:
+                st.info("Sem datas de solicitação registradas.")
+
+        with an_c2:
+            st.markdown("**Valor Comprado por Mês (data de compra)**")
+            _df_comprado = df_an[
+                df_an["situacao"].fillna("").str.lower().isin(
+                    {"comprado", "concluído", "concluido", "entregue"}
+                )
+            ]
+            df_evol_compra = metrics.evolucao_mensal(_df_comprado, date_col="data_compra")
+            if not df_evol_compra.empty:
+                fig_evol_c = px.line(
+                    df_evol_compra,
+                    x="mes",
+                    y="valor_total",
+                    markers=True,
+                    labels={"mes": "Mês", "valor_total": "Valor (R$)"},
+                    color_discrete_sequence=["#2ca02c"],
+                )
+                fig_evol_c.update_layout(margin=dict(l=0, r=0, t=10, b=0), height=280)
+                st.plotly_chart(fig_evol_c, use_container_width=True)
+            else:
+                st.info("Sem registros de compra com data preenchida.")
+
+        st.markdown("---")
+
+        # ── Seção 2: Distribuição por Status ────────────────────────────────
+        st.markdown("### 📊 Distribuição por Status")
+        df_sit_an = metrics.contagem_por_situacao(df_an)
+        an_s1, an_s2 = st.columns(2)
+
+        with an_s1:
+            st.markdown("**Quantidade de Requisições por Status**")
+            if not df_sit_an.empty:
+                fig_pie = px.pie(
+                    df_sit_an,
+                    names="situacao",
+                    values="quantidade",
+                    hole=0.4,
+                    color_discrete_sequence=px.colors.qualitative.Set2,
+                )
+                fig_pie.update_layout(margin=dict(l=0, r=0, t=10, b=0), height=300)
+                st.plotly_chart(fig_pie, use_container_width=True)
+
+        with an_s2:
+            st.markdown("**Valor Total por Status**")
+            if not df_sit_an.empty:
+                fig_val_sit = px.bar(
+                    df_sit_an.sort_values("valor_total", ascending=False),
+                    x="situacao",
+                    y="valor_total",
+                    labels={"situacao": "", "valor_total": "Valor (R$)"},
+                    color="situacao",
+                    color_discrete_sequence=px.colors.qualitative.Set2,
+                )
+                fig_val_sit.update_layout(
+                    showlegend=False,
+                    margin=dict(l=0, r=0, t=10, b=0),
+                    height=300,
+                )
+                st.plotly_chart(fig_val_sit, use_container_width=True)
+
+        st.markdown("---")
+
+        # ── Seção 3: Análise de Fornecedores ────────────────────────────────
+        st.markdown("### 🏭 Análise de Fornecedores")
+        an_f1, an_f2 = st.columns(2)
+
+        with an_f1:
+            st.markdown("**Top 15 Fornecedores por Valor**")
+            df_top15 = metrics.top_fornecedores(df_an, n=15)
+            if not df_top15.empty:
+                fig_top15 = px.bar(
+                    df_top15.sort_values("valor_total"),
+                    x="valor_total",
+                    y="fornecedor",
+                    orientation="h",
+                    labels={"valor_total": "Valor (R$)", "fornecedor": ""},
+                    color_discrete_sequence=["#4C72B0"],
+                )
+                fig_top15.update_layout(margin=dict(l=0, r=0, t=10, b=0), height=400)
+                st.plotly_chart(fig_top15, use_container_width=True)
+
+        with an_f2:
+            st.markdown("**Curva de Pareto — Concentração de Gasto**")
+            df_pareto = metrics.pareto_fornecedores(df_an)
+            if not df_pareto.empty:
+                df_pareto_top = df_pareto.head(30).copy()
+                df_pareto_top["idx"] = range(1, len(df_pareto_top) + 1)
+                fig_pareto = px.line(
+                    df_pareto_top,
+                    x="idx",
+                    y="acumulado",
+                    markers=True,
+                    labels={"idx": "Nº de Fornecedores", "acumulado": "% Gasto Acumulado"},
+                    color_discrete_sequence=["#d62728"],
+                )
+                fig_pareto.add_hline(
+                    y=80,
+                    line_dash="dash",
+                    line_color="gray",
+                    annotation_text="80%",
+                    annotation_position="right",
+                )
+                fig_pareto.update_layout(margin=dict(l=0, r=0, t=10, b=0), height=400)
+                st.plotly_chart(fig_pareto, use_container_width=True)
+                _forn_80 = int((df_pareto["acumulado"] <= 80).sum())
+                st.caption(
+                    f"**{_forn_80} fornecedor(es)** concentram 80% do gasto total "
+                    f"(de {len(df_pareto)} fornecedores ativos)."
+                )
+
+        st.markdown("---")
+
+        # ── Seção 4: Análise por Empresa/Setor ──────────────────────────────
+        st.markdown("### 🏢 Análise por Empresa")
+        df_emp_an = metrics.metricas_por_empresa(df_an)
+        if not df_emp_an.empty:
+            fig_emp = px.bar(
+                df_emp_an.head(15).sort_values("valor_total"),
+                x="valor_total",
+                y="empresa",
+                orientation="h",
+                labels={"valor_total": "Valor (R$)", "empresa": ""},
+                color_discrete_sequence=["#9467bd"],
+            )
+            fig_emp.update_layout(margin=dict(l=0, r=0, t=10, b=0), height=350)
+            st.plotly_chart(fig_emp, use_container_width=True)
+
+            df_emp_display = df_emp_an.copy()
+            df_emp_display.columns = ["Empresa", "Qtd.", "Valor Total (R$)", "Ticket Médio (R$)"]
+            df_emp_display["Valor Total (R$)"] = df_emp_display["Valor Total (R$)"].apply(format_currency)
+            df_emp_display["Ticket Médio (R$)"] = df_emp_display["Ticket Médio (R$)"].apply(format_currency)
+            st.dataframe(df_emp_display, use_container_width=True, hide_index=True)
+
+        st.markdown("---")
+
+        # ── Seção 5: Análise por Projeto ────────────────────────────────────
+        st.markdown("### 📁 Análise por Projeto")
+        df_proj_an = metrics.metricas_por_projeto(df_an)
+        _df_proj_validos = df_proj_an.dropna(subset=["projeto"])
+        _df_proj_validos = _df_proj_validos[_df_proj_validos["projeto"].str.strip() != ""]
+        if not _df_proj_validos.empty:
+            an_p1, an_p2 = st.columns(2)
+            with an_p1:
+                fig_proj = px.bar(
+                    _df_proj_validos.head(10).sort_values("valor_total"),
+                    x="valor_total",
+                    y="projeto",
+                    orientation="h",
+                    labels={"valor_total": "Valor (R$)", "projeto": ""},
+                    color_discrete_sequence=["#e377c2"],
+                )
+                fig_proj.update_layout(margin=dict(l=0, r=0, t=10, b=0), height=300)
+                st.plotly_chart(fig_proj, use_container_width=True)
+            with an_p2:
+                df_proj_display = _df_proj_validos.copy()
+                df_proj_display.columns = ["Projeto", "Qtd.", "Valor Total (R$)"]
+                df_proj_display["Valor Total (R$)"] = df_proj_display["Valor Total (R$)"].apply(format_currency)
+                st.dataframe(df_proj_display, use_container_width=True, hide_index=True)
+        else:
+            st.info("Nenhum projeto identificado nos dados.")
+
+        st.markdown("---")
+
+        # ── Seção 6: Indicadores de Prazo ───────────────────────────────────
+        st.markdown("### ⏱️ Indicadores de Prazo")
+        an_t1, an_t2 = st.columns(2)
+
+        with an_t1:
+            st.markdown("**Distribuição do Tempo de Atendimento (dias)**")
+            dias_serie = metrics.distribuicao_tempo(df_an)
+            if not dias_serie.empty:
+                fig_hist = px.histogram(
+                    dias_serie,
+                    nbins=30,
+                    labels={"value": "Dias", "count": "Nº Requisições"},
+                    color_discrete_sequence=["#17becf"],
+                )
+                fig_hist.update_layout(
+                    showlegend=False,
+                    margin=dict(l=0, r=0, t=10, b=0),
+                    height=280,
+                    xaxis_title="Dias até a compra",
+                    yaxis_title="Quantidade",
+                )
+                st.plotly_chart(fig_hist, use_container_width=True)
+                st.caption(
+                    f"Mínimo: {int(dias_serie.min())} dias | "
+                    f"Mediana: {int(dias_serie.median())} dias | "
+                    f"Máximo: {int(dias_serie.max())} dias"
+                )
+            else:
+                st.info("Sem registros com data de solicitação e compra preenchidas.")
+
+        with an_t2:
+            st.markdown("**Tempo Médio por Fornecedor**")
+            df_tempo_forn = metrics.tempo_por_fornecedor(df_an)
+            if not df_tempo_forn.empty:
+                df_tf_display = df_tempo_forn.head(15).copy()
+                fig_tf = px.bar(
+                    df_tf_display.sort_values("tempo_medio_dias"),
+                    x="tempo_medio_dias",
+                    y="fornecedor",
+                    orientation="h",
+                    labels={"tempo_medio_dias": "Dias (média)", "fornecedor": ""},
+                    color_discrete_sequence=["#bcbd22"],
+                )
+                fig_tf.update_layout(margin=dict(l=0, r=0, t=10, b=0), height=280)
+                st.plotly_chart(fig_tf, use_container_width=True)
+            else:
+                st.info("Sem dados de prazo por fornecedor.")
+
+        st.markdown("---")
+
+        # ── Seção 7: Tabela completa ─────────────────────────────────────────
+        with st.expander("📋 Tabela Completa de Dados", expanded=False):
+            display_cols = [c for c in COLUMN_ORDER if c in df_an.columns]
+            st.dataframe(df_an[display_cols], use_container_width=True, hide_index=True)
+
+
+# ---- Projetos ----
 with aba_projetos:
     st.subheader("Projetos")
-    projetos = crud.list_projetos()
-    if not projetos:
-        st.info("Nenhum projeto cadastrado ainda. Ao criar uma requisição, selecione ou informe um projeto.")
+
+    # ── Criar novo projeto ────────────────────────────────────────────────
+    with st.expander("➕ Criar novo projeto", expanded=False):
+        with st.form("form_criar_projeto", clear_on_submit=True):
+            _pnome = st.text_input("Nome do projeto *", placeholder="Ex: OBRA NORTE 2024")
+            _pdesc = st.text_area("Descrição (opcional)", height=80)
+            if st.form_submit_button("Criar projeto", use_container_width=True):
+                _pnome_clean = _pnome.strip().upper()
+                if not _pnome_clean:
+                    st.error("Nome do projeto é obrigatório.")
+                elif _pnome_clean in [p.upper() for p in crud.list_projetos()]:
+                    st.warning(f"Projeto '{_pnome_clean}' já existe.")
+                else:
+                    crud.create_projeto(_pnome_clean, _pdesc)
+                    st.toast(f"Projeto '{_pnome_clean}' criado.", icon="✅")
+                    st.rerun()
+
+    all_projetos = crud.fetch_all_projetos()
+
+    if not all_projetos:
+        st.info("Nenhum projeto cadastrado. Use o painel acima para criar o primeiro projeto.")
     else:
-        projeto_sel = st.selectbox("Selecione o projeto", options=projetos, key="projeto_sel_tab")
+        # ── Layout: lista à esquerda | detalhe à direita ──────────────────
+        col_lista, col_detalhe = st.columns([1, 2])
 
-        reqs_projeto = crud.fetch_requisicoes_por_projeto(projeto_sel)
-        orcs_projeto = crud.fetch_orcamentos_por_projeto(projeto_sel)
+        with col_lista:
+            st.markdown("**Projetos cadastrados**")
+            _proj_nomes = [p["nome"] for p in all_projetos]
+            projeto_sel_idx = st.radio(
+                "Selecionar",
+                range(len(_proj_nomes)),
+                format_func=lambda i: _proj_nomes[i],
+                label_visibility="collapsed",
+                key="projeto_radio_sel",
+            )
+            projeto_sel_dict = all_projetos[projeto_sel_idx]
 
-        c1, c2 = st.columns(2)
-        with c1:
-            st.metric("Requisições no projeto", len(reqs_projeto))
-        with c2:
-            st.metric("Orçamentos no projeto", len(orcs_projeto))
+        with col_detalhe:
+            _psel_nome = projeto_sel_dict["nome"]
+            _psel_id   = projeto_sel_dict["id"]
+            _psel_desc = projeto_sel_dict.get("descricao") or ""
+            _psel_data = projeto_sel_dict.get("criado_em", "")
 
-        st.markdown("#### Itens/requisições do projeto")
-        st.dataframe(pd.DataFrame(reqs_projeto), use_container_width=True)
+            reqs_projeto = crud.fetch_requisicoes_por_projeto(_psel_nome)
+            orcs_projeto = crud.fetch_orcamentos_por_projeto(_psel_nome)
 
-        st.markdown("#### Orçamentos consolidados do projeto")
-        st.dataframe(pd.DataFrame(orcs_projeto), use_container_width=True)
+            df_reqs_p = pd.DataFrame(reqs_projeto)
 
+            # Métricas do projeto
+            _total_val = 0.0
+            _status_counts: dict = {}
+            if not df_reqs_p.empty:
+                _total_val = float(
+                    (df_reqs_p["valor"].fillna(0) - df_reqs_p["valor_desconto"].fillna(0)).sum()
+                )
+                _status_counts = df_reqs_p["situacao"].value_counts().to_dict()
+
+            st.markdown(f"### 📁 {_psel_nome}")
+            if _psel_desc:
+                st.caption(_psel_desc)
+            if _psel_data:
+                st.caption(f"Criado em: {_psel_data[:10]}")
+
+            _pm1, _pm2, _pm3 = st.columns(3)
+            _pm1.metric("Requisições", len(reqs_projeto))
+            _pm2.metric("Orçamentos", len(orcs_projeto))
+            _pm3.metric("Total gasto", format_currency(_total_val))
+
+            # Breakdown de status
+            if _status_counts:
+                _status_str = "  ·  ".join(
+                    f"{st_}: {cnt}" for st_, cnt in sorted(_status_counts.items())
+                )
+                st.caption(f"Status: {_status_str}")
+
+            st.markdown("---")
+
+            # Editar projeto
+            with st.expander("✏️ Editar projeto", expanded=False):
+                with st.form(f"form_editar_projeto_{_psel_id}"):
+                    _edit_nome = st.text_input("Nome", value=_psel_nome)
+                    _edit_desc = st.text_area("Descrição", value=_psel_desc, height=80)
+                    _col_save, _col_del = st.columns(2)
+                    _save = _col_save.form_submit_button("💾 Salvar", use_container_width=True)
+                    _del  = _col_del.form_submit_button(
+                        "🗑️ Excluir projeto", use_container_width=True, type="secondary"
+                    )
+                    if _save:
+                        _edit_nome_clean = _edit_nome.strip().upper()
+                        if not _edit_nome_clean:
+                            st.error("Nome não pode ser vazio.")
+                        else:
+                            crud.update_projeto(_psel_id, _edit_nome_clean, _edit_desc)
+                            st.toast("Projeto atualizado.", icon="✅")
+                            st.rerun()
+                    if _del:
+                        crud.delete_projeto(_psel_id, _psel_nome)
+                        st.toast(f"Projeto '{_psel_nome}' excluído. Requisições desvinculadas.", icon="🗑️")
+                        st.rerun()
+
+            # Tabela de requisições
+            st.markdown("#### Requisições do projeto")
+            if df_reqs_p.empty:
+                st.info("Nenhuma requisição vinculada a este projeto ainda.")
+            else:
+                _display_cols = [c for c in [
+                    "id", "data_solicitacao", "empresa", "item",
+                    "fornecedor", "valor", "situacao",
+                ] if c in df_reqs_p.columns]
+                _df_show = df_reqs_p[_display_cols].copy()
+                for _dc in ["data_solicitacao", "data_compra"]:
+                    if _dc in _df_show.columns:
+                        _df_show[_dc] = pd.to_datetime(_df_show[_dc], errors="coerce").dt.strftime("%d/%m/%Y").fillna("")
+                st.dataframe(_df_show, use_container_width=True, hide_index=True)
+
+            # Tabela de orçamentos
+            st.markdown("#### Orçamentos consolidados")
+            if not orcs_projeto:
+                st.info("Nenhum orçamento registrado para este projeto.")
+            else:
+                _df_orcs = pd.DataFrame(orcs_projeto)
+                _orc_cols = [c for c in ["id", "item", "empresa", "fornecedor", "valor", "status_orcamento", "prazo_entrega"] if c in _df_orcs.columns]
+                st.dataframe(_df_orcs[_orc_cols], use_container_width=True, hide_index=True)
+
+
+# ---- Importar ----
 with aba_importar:
     st.subheader("Importar Excel")
     upload = st.file_uploader("Selecione o arquivo .xlsx", type=["xlsx"], key="upload_excel")
     if upload is not None:
         st.session_state.import_file_bytes = upload.getvalue()
         st.session_state.import_file_name = upload.name
+
     file_bytes = st.session_state.get("import_file_bytes")
     if file_bytes:
         excel_file = pd.ExcelFile(io.BytesIO(file_bytes))
@@ -816,13 +1288,13 @@ with aba_importar:
         sheet = st.selectbox("Selecione a planilha", ["(Primeira)"] + sheets)
         sheet_name = None if sheet == "(Primeira)" else sheet
 
-        st.caption(f"Arquivo atual: {st.session_state.get('import_file_name', 'upload')} ")
+        st.caption(f"Arquivo atual: {st.session_state.get('import_file_name', 'upload')}")
         if st.button("Limpar arquivo carregado"):
             st.session_state.pop("import_file_bytes", None)
             st.session_state.pop("import_file_name", None)
             st.rerun()
 
-        if st.button("Importar"):
+        if st.button("📥 Importar", use_container_width=True):
             df_raw = excel_io.load_excel(io.BytesIO(file_bytes), sheet_name=sheet_name)
             total_before = len(df_raw)
             df_norm = excel_io.normalize_dataframe(df_raw)
@@ -830,15 +1302,13 @@ with aba_importar:
             registros = excel_io.dataframe_to_records(df_norm)
             quantidade = len(registros)
             if quantidade:
-                from src.db import insert_many
-
                 insert_many(registros)
-                st.success(f"{quantidade} registros importados.")
+                st.success(f"{quantidade} registros importados com sucesso.")
                 st.warning("Importação não remove duplicatas automaticamente.")
                 if total_after < total_before:
                     st.info(
-                        "Linhas ignoradas sem Empresa, Item ou Data Solicitação (campos obrigatórios). "
-                        f"Total: {total_before - total_after}."
+                        f"{total_before - total_after} linha(s) ignorada(s) por falta de "
+                        "Empresa, Item ou Data Solicitação (campos obrigatórios)."
                     )
             else:
                 st.info("Nenhum registro encontrado para importar.")

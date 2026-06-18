@@ -96,13 +96,29 @@ def update_requisicao(requisicao_id: int, data: dict[str, Any]) -> None:
     assignments = ", ".join([f"{col} = :{col}" for col in COLUMN_ORDER])
     data["id"] = requisicao_id
     with ENGINE.begin() as conn:
+        _ensure_projeto_exists(conn, data.get("projeto") or "")
         conn.execute(text(f"UPDATE requisicoes SET {assignments} WHERE id = :id"), data)
+
+
+def _ensure_projeto_exists(conn: Any, nome: str) -> None:
+    """Garante que o projeto existe na tabela projetos (upsert pelo nome)."""
+    if not nome or not nome.strip():
+        return
+    conn.execute(
+        text(
+            "INSERT INTO projetos (nome) "
+            "SELECT :nome WHERE NOT EXISTS "
+            "(SELECT 1 FROM projetos WHERE UPPER(TRIM(nome)) = UPPER(TRIM(:nome)))"
+        ),
+        {"nome": nome.strip().upper()},
+    )
 
 
 def create_requisicao(data: dict[str, Any]) -> None:
     columns = ", ".join(COLUMN_ORDER)
     placeholders = ", ".join([":" + col for col in COLUMN_ORDER])
     with ENGINE.begin() as conn:
+        _ensure_projeto_exists(conn, data.get("projeto") or "")
         conn.execute(
             text(f"INSERT INTO requisicoes ({columns}) VALUES ({placeholders})"),
             data,
@@ -221,7 +237,53 @@ def delete_all_data() -> None:
 
 
 def list_projetos() -> list[str]:
-    return fetch_distinct("projeto")
+    """Retorna nomes de projetos da tabela projetos (ordenados A-Z)."""
+    with ENGINE.connect() as conn:
+        rows = conn.execute(
+            text("SELECT nome FROM projetos ORDER BY nome")
+        ).fetchall()
+    return [row.nome for row in rows]
+
+
+def fetch_all_projetos() -> list[dict[str, Any]]:
+    """Retorna todos os projetos com id, nome, descricao, criado_em."""
+    with ENGINE.connect() as conn:
+        rows = conn.execute(
+            text("SELECT id, nome, descricao, criado_em FROM projetos ORDER BY nome")
+        ).fetchall()
+    return [dict(row._mapping) for row in rows]
+
+
+def create_projeto(nome: str, descricao: str = "") -> None:
+    with ENGINE.begin() as conn:
+        conn.execute(
+            text("INSERT INTO projetos (nome, descricao) VALUES (:nome, :descricao)"),
+            {"nome": nome.strip().upper(), "descricao": descricao.strip()},
+        )
+
+
+def update_projeto(projeto_id: int, nome: str, descricao: str) -> None:
+    with ENGINE.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE projetos SET nome = :nome, descricao = :descricao WHERE id = :id"
+            ),
+            {"id": projeto_id, "nome": nome.strip().upper(), "descricao": descricao.strip()},
+        )
+        # Atualiza o campo texto em requisicoes para manter consistência
+        conn.execute(
+            text("UPDATE requisicoes SET projeto = :nome WHERE UPPER(TRIM(projeto)) = :old"),
+            {"nome": nome.strip().upper(), "old": nome.strip().upper()},
+        )
+
+
+def delete_projeto(projeto_id: int, nome: str) -> None:
+    with ENGINE.begin() as conn:
+        conn.execute(text("DELETE FROM projetos WHERE id = :id"), {"id": projeto_id})
+        conn.execute(
+            text("UPDATE requisicoes SET projeto = NULL WHERE UPPER(TRIM(projeto)) = :nome"),
+            {"nome": nome.strip().upper()},
+        )
 
 
 def fetch_requisicoes_por_projeto(projeto: str) -> list[dict[str, Any]]:

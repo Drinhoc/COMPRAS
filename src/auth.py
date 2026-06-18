@@ -20,7 +20,7 @@ def require_pin() -> bool:
         if pin == PIN_ACESSO:
             st.session_state.authenticated = True
             st.success("Acesso liberado.")
-            st.experimental_rerun()
+            st.rerun()
         else:
             st.error("PIN incorreto.")
     return False
