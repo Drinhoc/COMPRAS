@@ -55,6 +55,12 @@ if is_sqlite_url(database_url):
         st.stop()
 init_db()
 
+# Indicador de persistência (diagnóstico rápido)
+if is_sqlite_url(database_url):
+    st.sidebar.caption("🗄️ Banco: **SQLite (local/efêmero)**")
+else:
+    st.sidebar.caption("🗄️ Banco: **PostgreSQL (persistente)** ✅")
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -69,6 +75,21 @@ def format_currency(value: object) -> str:
     except (TypeError, ValueError):
         return str(value)
     return "R$ " + f"{num:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def run_safe(fn, *args, sucesso: str | None = None, icone: str = "✅", **kwargs) -> bool:
+    """Executa uma operação de banco tratando erros com mensagem amigável.
+
+    Retorna True em caso de sucesso, False se houve erro.
+    """
+    try:
+        fn(*args, **kwargs)
+    except Exception as exc:  # noqa: BLE001 - feedback amigável ao usuário
+        st.error(f"Não foi possível concluir a operação: {exc}")
+        return False
+    if sucesso:
+        st.toast(sucesso, icon=icone)
+    return True
 
 
 def parse_date_input(value: str | None) -> date | None:
@@ -100,6 +121,18 @@ def validate_payload(payload: dict) -> list[str]:
         errors.append("Data Solicitação é obrigatória.")
     if payload["qtde"] is not None and payload["qtde"] < 0:
         errors.append("Qtde deve ser >= 0.")
+    # Valores não podem ser negativos
+    for campo, rotulo in (("valor", "Valor"), ("valor_desconto", "Valor Desconto")):
+        v = payload.get(campo)
+        if v is not None and v < 0:
+            errors.append(f"{rotulo} não pode ser negativo.")
+    # Data de compra não pode ser anterior à solicitação
+    ds, dc = payload.get("data_solicitacao"), payload.get("data_compra")
+    if ds and dc and dc < ds:
+        errors.append("Data Compra não pode ser anterior à Data Solicitação.")
+    # Fornecedor obrigatório ao marcar como Comprado/Concluído
+    if payload.get("situacao") in ("Comprado", "Concluído") and not (payload.get("fornecedor") or "").strip():
+        errors.append("Fornecedor é obrigatório quando a situação é 'Comprado' ou 'Concluído'.")
     return errors
 
 
@@ -432,6 +465,19 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
 
     st.caption(f"REQ-{selected_req_id:04d} · {req_data.get('empresa', '')} · {req_data.get('item', '')}")
 
+    def _fmt_ts(v: object) -> str:
+        if not v:
+            return "—"
+        try:
+            return pd.to_datetime(v).strftime("%d/%m/%Y %H:%M")
+        except Exception:
+            return str(v)
+
+    st.caption(
+        f"🕘 Criada em {_fmt_ts(req_data.get('created_at'))} · "
+        f"Última alteração {_fmt_ts(req_data.get('updated_at'))}"
+    )
+
     tab_defs = [
         ("dados", "📝 Editar Dados"),
         ("itens", "📦 Itens"),
@@ -457,23 +503,31 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
             if errors:
                 for err in errors:
                     st.error(err)
-            else:
-                crud.update_requisicao(selected_req_id, payload)
+            elif run_safe(
+                crud.update_requisicao, selected_req_id, payload,
+                sucesso="Requisição atualizada com sucesso.",
+            ):
                 st.session_state.pop("selected_req_id", None)
-                st.toast("Requisição atualizada com sucesso.", icon="✅")
                 st.rerun()
 
         st.markdown("---")
-        if st.button(
-            "🗑️ Excluir esta requisição",
-            key=f"btn_del_req_{selected_req_id}",
-            use_container_width=True,
-            type="secondary",
-        ):
-            crud.delete_requisicao(selected_req_id)
-            st.session_state.pop("selected_req_id", None)
-            st.toast("Requisição excluída.", icon="🗑️")
-            st.rerun()
+        with st.expander("🗑️ Excluir esta requisição"):
+            st.warning("Esta ação remove a requisição e seus itens, orçamentos, aprovações e anexos.")
+            confirma = st.checkbox(
+                "Confirmo que desejo excluir definitivamente.",
+                key=f"confirm_del_req_{selected_req_id}",
+            )
+            if st.button(
+                "Excluir definitivamente",
+                key=f"btn_del_req_{selected_req_id}",
+                use_container_width=True,
+                type="primary",
+                disabled=not confirma,
+            ):
+                if run_safe(crud.delete_requisicao, selected_req_id,
+                            sucesso="Requisição excluída.", icone="🗑️"):
+                    st.session_state.pop("selected_req_id", None)
+                    st.rerun()
 
     with tabs["itens"]:
         st.markdown("##### Itens da requisição")
@@ -500,6 +554,7 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
             },
         )
         # Total previsto
+        _tot = 0.0
         try:
             _tot = (
                 edited_itens["quantidade"].fillna(0).astype(float)
@@ -509,11 +564,22 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
         except Exception:
             pass
 
+        atualizar_valor = st.checkbox(
+            "Atualizar o Valor da requisição com o total dos itens",
+            value=True,
+            key=f"upd_valor_itens_{selected_req_id}",
+            help="O Valor passa a ser a soma dos itens. Você ainda pode ajustá-lo manualmente na aba Editar Dados.",
+        )
         if st.button("💾 Salvar itens", key=f"save_itens_{selected_req_id}", use_container_width=True, type="primary"):
             rows = edited_itens.to_dict("records")
-            crud.replace_itens(selected_req_id, rows)
-            st.toast("Itens salvos.", icon="✅")
-            st.rerun()
+
+            def _salvar_itens():
+                crud.replace_itens(selected_req_id, rows)
+                if atualizar_valor:
+                    crud.set_valor_requisicao(selected_req_id, float(_tot or 0))
+
+            if run_safe(_salvar_itens, sucesso="Itens salvos."):
+                st.rerun()
 
     with tabs["orc"]:
         orcs = crud.list_orcamentos(selected_req_id)
@@ -577,16 +643,26 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
                 st.rerun()
 
         if orcs:
-            st.markdown("##### Excluir Orçamento")
-            del_orc = st.selectbox(
-                "Selecione o orçamento pelo ID",
-                [o["id"] for o in orcs],
-                key=f"del_orc_{selected_req_id}",
-            )
-            if st.button("Excluir orçamento selecionado", key=f"btn_del_orc_{selected_req_id}", use_container_width=True):
-                crud.delete_orcamento(int(del_orc))
-                st.toast("Orçamento excluído.", icon="🗑️")
-                st.rerun()
+            with st.expander("🗑️ Excluir Orçamento"):
+                del_orc = st.selectbox(
+                    "Selecione o orçamento pelo ID",
+                    [o["id"] for o in orcs],
+                    key=f"del_orc_{selected_req_id}",
+                )
+                confirma_orc = st.checkbox(
+                    "Confirmo a exclusão deste orçamento.",
+                    key=f"confirm_del_orc_{selected_req_id}",
+                )
+                if st.button(
+                    "Excluir orçamento selecionado",
+                    key=f"btn_del_orc_{selected_req_id}",
+                    use_container_width=True,
+                    type="primary",
+                    disabled=not confirma_orc,
+                ):
+                    if run_safe(crud.delete_orcamento, int(del_orc),
+                                sucesso="Orçamento excluído.", icone="🗑️"):
+                        st.rerun()
 
     with tabs["aprov"]:
         orcs_aprov = crud.list_orcamentos(selected_req_id)
@@ -654,32 +730,52 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
 
     with tabs["anexos"]:
         anexos = crud.list_anexos(selected_req_id)
+        orcs_anx = crud.list_orcamentos(selected_req_id)
+        orc_anx_label = {o["id"]: f"Orç. #{o['id']} · {o.get('fornecedor') or 's/ fornecedor'}" for o in orcs_anx}
         if anexos:
-            st.dataframe(pd.DataFrame(anexos), use_container_width=True, hide_index=True)
+            df_anx = pd.DataFrame(anexos)
+            if "orcamento_id" in df_anx.columns:
+                df_anx["orçamento"] = df_anx["orcamento_id"].apply(
+                    lambda x: orc_anx_label.get(int(x), f"Orç. #{int(x)}") if pd.notna(x) else "—"
+                )
+            cols_anx = [c for c in ["id", "tipo", "nome_arquivo", "orçamento", "uploaded_at"] if c in df_anx.columns]
+            st.dataframe(df_anx[cols_anx], use_container_width=True, hide_index=True)
         else:
             st.info("Nenhum anexo enviado.")
 
         st.markdown("##### Enviar Anexo")
         up = st.file_uploader("Selecione o arquivo", key=f"anexo_{selected_req_id}")
-        tipo_anexo = st.selectbox(
+        ac1, ac2 = st.columns(2)
+        tipo_anexo = ac1.selectbox(
             "Tipo de anexo",
             ["orcamento", "nf", "contrato", "outros"],
             key=f"tipo_{selected_req_id}",
         )
-        if st.button("Salvar anexo", key=f"btn_save_anexo_{selected_req_id}", use_container_width=True) and up is not None:
-            crud.create_anexo(
+        # Vínculo opcional a um orçamento
+        _orc_opts = [None] + [o["id"] for o in orcs_anx]
+        orc_vinculo = ac2.selectbox(
+            "Vincular a um orçamento (opcional)",
+            options=_orc_opts,
+            format_func=lambda i: "— Nenhum" if i is None else orc_anx_label.get(i, f"Orç. #{i}"),
+            key=f"anexo_orc_{selected_req_id}",
+        )
+        if st.button("Salvar anexo", key=f"btn_save_anexo_{selected_req_id}", use_container_width=True):
+            if up is None:
+                st.warning("Selecione um arquivo antes de salvar.")
+            elif run_safe(
+                crud.create_anexo,
                 {
                     "requisicao_id": selected_req_id,
-                    "orcamento_id": None,
+                    "orcamento_id": int(orc_vinculo) if orc_vinculo else None,
                     "tipo": tipo_anexo,
                     "nome_arquivo": up.name,
                     "mime_type": up.type,
                     "conteudo": up.getvalue(),
                     "uploaded_by": "gestor",
-                }
-            )
-            st.toast("Anexo salvo.", icon="✅")
-            st.rerun()
+                },
+                sucesso="Anexo salvo.",
+            ):
+                st.rerun()
 
         if anexos:
             st.markdown("##### Baixar / Excluir Anexo")
@@ -698,10 +794,19 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
                     key=f"dl_{selected_req_id}_{anexo_id}",
                     use_container_width=True,
                 )
-            if st.button("🗑️ Excluir anexo", key=f"del_anexo_{selected_req_id}", use_container_width=True):
-                crud.delete_anexo(int(anexo_id))
-                st.toast("Anexo excluído.", icon="🗑️")
-                st.rerun()
+            confirma_anx = st.checkbox(
+                "Confirmo a exclusão deste anexo.",
+                key=f"confirm_del_anexo_{selected_req_id}",
+            )
+            if st.button(
+                "🗑️ Excluir anexo",
+                key=f"del_anexo_{selected_req_id}",
+                use_container_width=True,
+                disabled=not confirma_anx,
+            ):
+                if run_safe(crud.delete_anexo, int(anexo_id),
+                            sucesso="Anexo excluído.", icone="🗑️"):
+                    st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -889,13 +994,26 @@ with aba_requisicoes:
     df_view = pd.DataFrame(registros)
 
     if not df_view.empty:
+        # Mantém as datas em ISO (YYYY-MM-DD) para ordenar/filtrar corretamente;
+        # a exibição em DD/MM/YYYY é feita por valueFormatter no grid.
         for col in ["data_solicitacao", "data_compra"]:
             if col in df_view.columns:
                 df_view[col] = (
                     pd.to_datetime(df_view[col], errors="coerce")
-                    .dt.strftime("%d/%m/%Y")
+                    .dt.strftime("%Y-%m-%d")
                     .fillna("")
                 )
+
+        date_formatter = JsCode(
+            """
+            function(params) {
+                if (!params.value) return '';
+                var p = String(params.value).split('-');
+                if (p.length !== 3) return params.value;
+                return p[2] + '/' + p[1] + '/' + p[0];
+            }
+            """
+        )
 
         req_renderer = JsCode(
             """
@@ -1010,7 +1128,8 @@ with aba_requisicoes:
                             cellRenderer=req_renderer, filter=False)
         gb.configure_column("id",               hide=True)
         gb.configure_column("data_solicitacao", headerName="Dt. Solicitação",
-                            width=130, suppressSizeToFit=True)
+                            width=130, suppressSizeToFit=True,
+                            valueFormatter=date_formatter)
         gb.configure_column("empresa",          headerName="Empresa",   width=150)
         gb.configure_column("item",             headerName="Item",      width=260)
         gb.configure_column("fornecedor",       headerName="Fornecedor", width=160)
@@ -1039,6 +1158,8 @@ with aba_requisicoes:
             rowSelection="single",
             rowHoverHighlight=True,
             getRowStyle=row_style,
+            singleClickEdit=True,
+            stopEditingWhenCellsLoseFocus=True,
         )
 
         grid_result = AgGrid(

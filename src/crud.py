@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import text
+
+
+def _now() -> str:
+    return datetime.now().isoformat(timespec="seconds")
 
 from .constants import COLUMN_ORDER
 from .db import ENGINE
@@ -118,11 +123,24 @@ def get_by_id(requisicao_id: int) -> dict[str, Any] | None:
 
 
 def update_requisicao(requisicao_id: int, data: dict[str, Any]) -> None:
-    assignments = ", ".join([f"{col} = :{col}" for col in COLUMN_ORDER])
-    data["id"] = requisicao_id
+    # Atualização parcial: só mexe nas colunas presentes em `data`.
+    cols = [c for c in COLUMN_ORDER if c in data]
+    assignments = ", ".join([f"{col} = :{col}" for col in cols] + ["updated_at = :updated_at"])
+    params = {c: data[c] for c in cols}
+    params["updated_at"] = _now()
+    params["id"] = requisicao_id
     with ENGINE.begin() as conn:
-        _ensure_projeto_exists(conn, data.get("projeto") or "")
-        conn.execute(text(f"UPDATE requisicoes SET {assignments} WHERE id = :id"), data)
+        if "projeto" in data:
+            _ensure_projeto_exists(conn, data.get("projeto") or "")
+        conn.execute(text(f"UPDATE requisicoes SET {assignments} WHERE id = :id"), params)
+
+
+def set_valor_requisicao(requisicao_id: int, valor: float) -> None:
+    with ENGINE.begin() as conn:
+        conn.execute(
+            text("UPDATE requisicoes SET valor = :v, updated_at = :u WHERE id = :id"),
+            {"v": valor, "u": _now(), "id": requisicao_id},
+        )
 
 
 def _ensure_projeto_exists(conn: Any, nome: str) -> None:
@@ -140,18 +158,23 @@ def _ensure_projeto_exists(conn: Any, nome: str) -> None:
 
 
 def create_requisicao(data: dict[str, Any]) -> None:
-    columns = ", ".join(COLUMN_ORDER)
-    placeholders = ", ".join([":" + col for col in COLUMN_ORDER])
+    all_cols = COLUMN_ORDER + ["created_at", "updated_at"]
+    columns = ", ".join(all_cols)
+    placeholders = ", ".join([":" + col for col in all_cols])
+    params = {c: data.get(c) for c in COLUMN_ORDER}
+    params["created_at"] = params["updated_at"] = _now()
     with ENGINE.begin() as conn:
         _ensure_projeto_exists(conn, data.get("projeto") or "")
         conn.execute(
             text(f"INSERT INTO requisicoes ({columns}) VALUES ({placeholders})"),
-            data,
+            params,
         )
 
 
 def delete_requisicao(requisicao_id: int) -> None:
     with ENGINE.begin() as conn:
+        for tabela in ("aprovacoes", "anexos", "orcamentos", "itens"):
+            conn.execute(text(f"DELETE FROM {tabela} WHERE requisicao_id = :id"), {"id": requisicao_id})
         conn.execute(text("DELETE FROM requisicoes WHERE id = :id"), {"id": requisicao_id})
 
 

@@ -33,6 +33,8 @@ requisicoes = Table(
     Column("valor_desconto", Float),
     Column("nf", String),
     Column("observacao", String),
+    Column("created_at", String, server_default=text("CURRENT_TIMESTAMP")),
+    Column("updated_at", String, server_default=text("CURRENT_TIMESTAMP")),
 )
 
 orcamentos = Table(
@@ -135,6 +137,12 @@ def init_db() -> None:
     if "projeto" not in columns:
         with ENGINE.begin() as conn:
             conn.execute(text("ALTER TABLE requisicoes ADD COLUMN projeto VARCHAR"))
+
+    # Migração: colunas de auditoria
+    for _col in ("created_at", "updated_at"):
+        if _col not in columns:
+            with ENGINE.begin() as conn:
+                conn.execute(text(f"ALTER TABLE requisicoes ADD COLUMN {_col} VARCHAR"))
 
     # Migração: coluna orcamento_id em aprovacoes (aprovação por orçamento)
     if inspector.has_table("aprovacoes"):
