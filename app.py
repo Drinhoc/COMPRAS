@@ -1099,27 +1099,15 @@ with aba_requisicoes:
             """
         )
 
-        # Contagem de orçamentos/anexos e resumo de itens por requisição
+        # Contagem de orçamentos/anexos por requisição
         _ids = [int(i) for i in df_view["id"].tolist()]
         _counts = crud.fetch_counts(_ids)
-        _itens_resumo = crud.fetch_itens_resumo(_ids)
-
-        def _item_label(req_id: int, fallback: str) -> str:
-            info = _itens_resumo.get(int(req_id))
-            if not info:
-                return fallback or ""
-            txt = info.get("primeiro") or fallback or ""
-            total = info.get("total", 0)
-            return f"{txt}  (+{total - 1})" if total > 1 else txt
 
         # Exibe apenas as colunas essenciais; o resto fica no modal
         _GRID_COLS = ["req", "data_solicitacao", "empresa",
                       "item", "fornecedor", "valor", "situacao", "col_orc", "col_anx"]
         df_grid = df_view.copy()
         df_grid["req"] = df_grid["id"].apply(lambda i: f"REQ-{int(i):04d}")
-        df_grid["item"] = df_grid.apply(
-            lambda r: _item_label(r["id"], r.get("item", "")), axis=1
-        )
         df_grid["col_orc"] = df_grid["id"].apply(
             lambda i: f"💰 {_counts.get(int(i), {}).get('orcamentos', 0)}"
         )
@@ -1143,8 +1131,10 @@ with aba_requisicoes:
         gb.configure_column("data_solicitacao", headerName="Dt. Solicitação",
                             width=130, suppressSizeToFit=True,
                             valueFormatter=date_formatter)
-        gb.configure_column("empresa",          headerName="Empresa",   width=150)
-        gb.configure_column("item",             headerName="Item",      width=260)
+        gb.configure_column("empresa",          headerName="Empresa",   width=150,
+                            editable=True)
+        gb.configure_column("item",             headerName="Item",      width=260,
+                            editable=True)
         gb.configure_column("fornecedor",       headerName="Fornecedor", width=160,
                             editable=True)
         gb.configure_column("valor",            headerName="Valor (R$)",
@@ -1180,8 +1170,9 @@ with aba_requisicoes:
         )
 
         st.caption(
-            "✏️ Clique numa célula de **Status**, **Fornecedor** ou **Valor** para editar; "
-            "ao sair da célula, salva automaticamente. Clique no **código REQ** para abrir os detalhes."
+            "✏️ Clique numa célula de **Status**, **Empresa**, **Item**, **Fornecedor** ou **Valor** "
+            "para editar; ao sair da célula, salva automaticamente. "
+            "Clique no **código REQ** para abrir os detalhes."
         )
         grid_result = AgGrid(
             df_grid,
@@ -1197,7 +1188,7 @@ with aba_requisicoes:
         # ── Detectar edição inline (Status, Fornecedor, Valor) ────────────
         df_returned = grid_result.get("data")
         if df_returned is not None and not df_returned.empty and "id" in df_returned.columns:
-            _editaveis = ["situacao", "fornecedor", "valor"]
+            _editaveis = ["situacao", "fornecedor", "valor", "empresa", "item"]
             for _, ret_row in df_returned.iterrows():
                 _rid = ret_row.get("id")
                 if _rid is None:
@@ -1217,6 +1208,11 @@ with aba_requisicoes:
                     elif _col == "situacao":
                         if _new and str(_old) != str(_new):
                             _updates["situacao"] = str(_new)
+                    elif _col in ("empresa", "item"):
+                        # Campos obrigatórios: não permite salvar vazio
+                        _nv = str(_new or "").strip()
+                        if _nv and _nv != str(_old or "").strip():
+                            _updates[_col] = _nv.upper() if _col == "empresa" else _nv
                     else:  # fornecedor
                         if (str(_new or "").strip()) != (str(_old or "").strip()):
                             _updates["fornecedor"] = str(_new or "").strip()
