@@ -63,11 +63,24 @@ anexos = Table(
     Column("uploaded_by", String),
 )
 
+itens = Table(
+    "itens",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("requisicao_id", Integer, nullable=False),
+    Column("descricao", String, nullable=False),
+    Column("quantidade", Float),
+    Column("unidade", String),
+    Column("valor_unitario", Float),
+    Column("observacao", String),
+)
+
 aprovacoes = Table(
     "aprovacoes",
     metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("requisicao_id", Integer, nullable=False),
+    Column("orcamento_id", Integer),
     Column("acao", String, nullable=False),
     Column("comentario", String),
     Column("aprovador", String),
@@ -122,6 +135,25 @@ def init_db() -> None:
     if "projeto" not in columns:
         with ENGINE.begin() as conn:
             conn.execute(text("ALTER TABLE requisicoes ADD COLUMN projeto VARCHAR"))
+
+    # Migração: coluna orcamento_id em aprovacoes (aprovação por orçamento)
+    if inspector.has_table("aprovacoes"):
+        apr_cols = {col["name"] for col in inspector.get_columns("aprovacoes")}
+        if "orcamento_id" not in apr_cols:
+            with ENGINE.begin() as conn:
+                conn.execute(text("ALTER TABLE aprovacoes ADD COLUMN orcamento_id INTEGER"))
+
+    # Migração: cria um item a partir dos campos legados para requisições sem itens
+    if inspector.has_table("itens"):
+        with ENGINE.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO itens (requisicao_id, descricao, quantidade, valor_unitario, observacao) "
+                    "SELECT r.id, r.item, r.qtde, r.valor, r.observacao FROM requisicoes r "
+                    "WHERE r.item IS NOT NULL AND TRIM(r.item) != '' "
+                    "AND NOT EXISTS (SELECT 1 FROM itens i WHERE i.requisicao_id = r.id)"
+                )
+            )
 
     # Popula tabela projetos com nomes já existentes em requisicoes (migração única)
     with ENGINE.begin() as conn:

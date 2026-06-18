@@ -94,6 +94,25 @@ def validate_payload(payload: dict) -> list[str]:
     return errors
 
 
+def resolve_selected_row(selected_rows: object) -> dict | None:
+    if isinstance(selected_rows, pd.DataFrame):
+        if selected_rows.empty:
+            return None
+        return selected_rows.iloc[0].to_dict()
+    if isinstance(selected_rows, list):
+        if not selected_rows:
+            return None
+        row0 = selected_rows[0]
+        if isinstance(row0, dict):
+            return row0
+        if isinstance(row0, pd.Series):
+            return row0.to_dict()
+        return None
+    if isinstance(selected_rows, dict):
+        return selected_rows
+    return None
+
+
 def resolve_selected_req_id(selected_rows: object) -> int | None:
     if isinstance(selected_rows, pd.DataFrame):
         if selected_rows.empty:
@@ -396,7 +415,7 @@ def render_requisicao_form(prefix: str, data: dict | None = None) -> dict:
 # ---------------------------------------------------------------------------
 
 @st.dialog("Detalhes da Requisição", width="large")
-def open_requisicao_dialog(selected_req_id: int) -> None:
+def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> None:
     req_data = crud.get_by_id(selected_req_id)
     if not req_data:
         st.warning("Requisição não encontrada.")
@@ -404,11 +423,20 @@ def open_requisicao_dialog(selected_req_id: int) -> None:
 
     st.caption(f"REQ-{selected_req_id:04d} · {req_data.get('empresa', '')} · {req_data.get('item', '')}")
 
-    tab_dados, tab_orc, tab_aprov, tab_arquivos = st.tabs(
-        ["📝 Editar Dados", "💰 Orçamentos", "✅ Aprovações", "📁 Anexos"]
-    )
+    tab_defs = [
+        ("dados", "📝 Editar Dados"),
+        ("itens", "📦 Itens"),
+        ("orc", "💰 Orçamentos"),
+        ("aprov", "✅ Aprovações"),
+        ("anexos", "📁 Anexos"),
+    ]
+    # A aba desejada vai para primeiro (st.tabs ativa a primeira); demais mantêm a ordem.
+    if want_tab in dict(tab_defs):
+        tab_defs.sort(key=lambda d: 0 if d[0] == want_tab else 1)
+    tab_objs = st.tabs([lbl for _, lbl in tab_defs])
+    tabs = {key: obj for (key, _), obj in zip(tab_defs, tab_objs)}
 
-    with tab_dados:
+    with tabs["dados"]:
         payload = render_requisicao_form(f"edit_{selected_req_id}", req_data)
         if st.button(
             "💾 Salvar dados da requisição",
@@ -438,7 +466,47 @@ def open_requisicao_dialog(selected_req_id: int) -> None:
             st.toast("Requisição excluída.", icon="🗑️")
             st.rerun()
 
-    with tab_orc:
+    with tabs["itens"]:
+        st.markdown("##### Itens da requisição")
+        st.caption("Adicione, edite ou remova linhas. O total é calculado por item (qtde × valor unit.).")
+        itens = crud.list_itens(selected_req_id)
+        df_itens = pd.DataFrame(
+            itens,
+            columns=["descricao", "quantidade", "unidade", "valor_unitario", "observacao"],
+        ) if itens else pd.DataFrame(
+            columns=["descricao", "quantidade", "unidade", "valor_unitario", "observacao"]
+        )
+        edited_itens = st.data_editor(
+            df_itens[["descricao", "quantidade", "unidade", "valor_unitario", "observacao"]],
+            key=f"itens_editor_{selected_req_id}",
+            num_rows="dynamic",
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "descricao": st.column_config.TextColumn("Descrição", required=True, width="large"),
+                "quantidade": st.column_config.NumberColumn("Qtde", min_value=0, step=1, format="%g"),
+                "unidade": st.column_config.TextColumn("Unid.", width="small"),
+                "valor_unitario": st.column_config.NumberColumn("Valor unit. (R$)", min_value=0, format="%.2f"),
+                "observacao": st.column_config.TextColumn("Observação"),
+            },
+        )
+        # Total previsto
+        try:
+            _tot = (
+                edited_itens["quantidade"].fillna(0).astype(float)
+                * edited_itens["valor_unitario"].fillna(0).astype(float)
+            ).sum()
+            st.metric("Total previsto dos itens", f"R$ {_tot:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+        except Exception:
+            pass
+
+        if st.button("💾 Salvar itens", key=f"save_itens_{selected_req_id}", use_container_width=True, type="primary"):
+            rows = edited_itens.to_dict("records")
+            crud.replace_itens(selected_req_id, rows)
+            st.toast("Itens salvos.", icon="✅")
+            st.rerun()
+
+    with tabs["orc"]:
         orcs = crud.list_orcamentos(selected_req_id)
         if orcs:
             st.dataframe(pd.DataFrame(orcs), use_container_width=True, hide_index=True)
@@ -481,38 +549,72 @@ def open_requisicao_dialog(selected_req_id: int) -> None:
                 st.toast("Orçamento excluído.", icon="🗑️")
                 st.rerun()
 
-    with tab_aprov:
+    with tabs["aprov"]:
+        orcs_aprov = crud.list_orcamentos(selected_req_id)
+        # Mapa id -> rótulo legível do orçamento
+        orc_label = {
+            o["id"]: f"Orç. #{o['id']} · {o.get('fornecedor') or 's/ fornecedor'} · "
+                     f"R$ {(o.get('valor') or 0):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            for o in orcs_aprov
+        }
+
         aps = crud.list_aprovacoes(selected_req_id)
         if aps:
-            st.dataframe(pd.DataFrame(aps), use_container_width=True, hide_index=True)
+            df_ap = pd.DataFrame(aps)
+            if "orcamento_id" in df_ap.columns:
+                df_ap["orçamento"] = df_ap["orcamento_id"].apply(
+                    lambda x: orc_label.get(int(x), f"Orç. #{int(x)}") if pd.notna(x) else "— (geral)"
+                )
+            cols_show = [c for c in ["created_at", "orçamento", "acao", "comentario", "aprovador"] if c in df_ap.columns]
+            st.dataframe(df_ap[cols_show], use_container_width=True, hide_index=True)
         else:
             st.info("Nenhuma ação de aprovação registrada.")
 
-        st.markdown("##### Registrar Ação")
-        acao = st.selectbox(
-            "Ação",
-            ["APROVADO", "REPROVADO", "DEVOLVIDO", "COMENTÁRIO"],
-            key=f"acao_{selected_req_id}",
-        )
-        aprovador = st.text_input("Aprovador", value="GESTOR", key=f"apr_{selected_req_id}")
-        comentario = st.text_area("Comentário", key=f"obs_apr_{selected_req_id}")
-        if st.button("Registrar ação", key=f"btn_apr_{selected_req_id}", use_container_width=True):
-            crud.create_aprovacao(
-                {
-                    "requisicao_id": selected_req_id,
-                    "acao": acao,
-                    "comentario": comentario.strip(),
-                    "aprovador": aprovador.strip() or "GESTOR",
-                }
+        st.markdown("##### Registrar Aprovação")
+        if not orcs_aprov:
+            st.warning("Cadastre ao menos um orçamento na aba 💰 Orçamentos para aprovar.")
+        else:
+            orc_escolhido = st.selectbox(
+                "Orçamento",
+                options=list(orc_label.keys()),
+                format_func=lambda i: orc_label[i],
+                key=f"apr_orc_{selected_req_id}",
             )
-            if acao == "APROVADO" and req_data:
-                updated = dict(req_data)
-                updated["situacao"] = "Comprado"
-                crud.update_requisicao(selected_req_id, updated)
-            st.toast("Ação de aprovação registrada.", icon="✅")
-            st.rerun()
+            acao = st.selectbox(
+                "Decisão",
+                ["APROVADO", "APROVADO PARCIAL", "REPROVADO", "COMENTÁRIO"],
+                key=f"acao_{selected_req_id}",
+            )
+            if acao == "APROVADO PARCIAL":
+                st.caption("Descreva no comentário o que foi aprovado (ex.: 'Orç. 3 itens 5 e 7; restante no Orç. 2').")
+            aprovador = st.text_input("Aprovador", value="GESTOR", key=f"apr_{selected_req_id}")
+            comentario = st.text_area("Comentário / detalhamento", key=f"obs_apr_{selected_req_id}")
+            if st.button("Registrar aprovação", key=f"btn_apr_{selected_req_id}", use_container_width=True, type="primary"):
+                crud.create_aprovacao(
+                    {
+                        "requisicao_id": selected_req_id,
+                        "orcamento_id": int(orc_escolhido),
+                        "acao": acao,
+                        "comentario": comentario.strip(),
+                        "aprovador": aprovador.strip() or "GESTOR",
+                    }
+                )
+                # Atualiza o status do orçamento conforme a decisão
+                status_map = {
+                    "APROVADO": "APROVADO",
+                    "APROVADO PARCIAL": "APROVADO PARCIAL",
+                    "REPROVADO": "REJEITADO",
+                }
+                if acao in status_map:
+                    crud.update_orcamento(int(orc_escolhido), {"status_orcamento": status_map[acao]})
+                if acao in ("APROVADO", "APROVADO PARCIAL") and req_data:
+                    updated = dict(req_data)
+                    updated["situacao"] = "Comprado"
+                    crud.update_requisicao(selected_req_id, updated)
+                st.toast("Aprovação registrada.", icon="✅")
+                st.rerun()
 
-    with tab_arquivos:
+    with tabs["anexos"]:
         anexos = crud.list_anexos(selected_req_id)
         if anexos:
             st.dataframe(pd.DataFrame(anexos), use_container_width=True, hide_index=True)
@@ -757,22 +859,19 @@ with aba_requisicoes:
                     .fillna("")
                 )
 
-        action_renderer = JsCode(
+        req_renderer = JsCode(
             """
-            class AcaoRenderer {
+            class ReqRenderer {
                 init(params) {
-                    this.eGui = document.createElement('button');
-                    this.eGui.innerHTML = '🔍 Abrir';
-                    this.eGui.title = 'Abrir detalhes, orçamentos, aprovações e anexos';
+                    this.eGui = document.createElement('a');
+                    this.eGui.innerHTML = params.value || '';
+                    this.eGui.title = 'Abrir detalhes, itens, orçamentos, aprovações e anexos';
                     this.eGui.style.cursor = 'pointer';
-                    this.eGui.style.border = '1px solid #4C72B0';
-                    this.eGui.style.borderRadius = '6px';
-                    this.eGui.style.background = '#4C72B0';
-                    this.eGui.style.color = '#fff';
-                    this.eGui.style.fontSize = '12px';
+                    this.eGui.style.color = '#4C72B0';
                     this.eGui.style.fontWeight = '600';
-                    this.eGui.style.padding = '2px 8px';
+                    this.eGui.style.textDecoration = 'underline';
                     this.eGui.addEventListener('click', () => {
+                        params.node.setDataValue('_want_tab', 'dados');
                         params.api.deselectAll();
                         params.node.setSelected(true);
                     });
@@ -781,6 +880,30 @@ with aba_requisicoes:
             }
             """
         )
+
+        def _badge_renderer(want_tab: str) -> JsCode:
+            return JsCode(
+                """
+                class BadgeRenderer {
+                    init(params) {
+                        this.eGui = document.createElement('span');
+                        this.eGui.innerHTML = params.value || '';
+                        this.eGui.title = 'Abrir nesta aba';
+                        this.eGui.style.cursor = 'pointer';
+                        this.eGui.style.textDecoration = 'underline dotted';
+                        this.eGui.addEventListener('click', () => {
+                            params.node.setDataValue('_want_tab', '__WANT__');
+                            params.api.deselectAll();
+                            params.node.setSelected(true);
+                        });
+                    }
+                    getGui() { return this.eGui; }
+                }
+                """.replace("__WANT__", want_tab)
+            )
+
+        orc_renderer = _badge_renderer("orc")
+        anx_renderer = _badge_renderer("anexos")
 
         currency_formatter = JsCode(
             """
@@ -807,34 +930,46 @@ with aba_requisicoes:
             """
         )
 
-        # Contagem de orçamentos/anexos por requisição (para os badges)
+        # Contagem de orçamentos/anexos e resumo de itens por requisição
         _ids = [int(i) for i in df_view["id"].tolist()]
         _counts = crud.fetch_counts(_ids)
+        _itens_resumo = crud.fetch_itens_resumo(_ids)
+
+        def _item_label(req_id: int, fallback: str) -> str:
+            info = _itens_resumo.get(int(req_id))
+            if not info:
+                return fallback or ""
+            txt = info.get("primeiro") or fallback or ""
+            total = info.get("total", 0)
+            return f"{txt}  (+{total - 1})" if total > 1 else txt
 
         # Exibe apenas as colunas essenciais; o resto fica no modal
-        _GRID_COLS = ["acoes", "req", "data_solicitacao", "empresa",
-                      "item", "fornecedor", "valor", "situacao", "anexos_orc"]
+        _GRID_COLS = ["req", "data_solicitacao", "empresa",
+                      "item", "fornecedor", "valor", "situacao", "col_orc", "col_anx"]
         df_grid = df_view.copy()
-        df_grid.insert(0, "acoes", "Abrir")
         df_grid["req"] = df_grid["id"].apply(lambda i: f"REQ-{int(i):04d}")
-        df_grid["anexos_orc"] = df_grid["id"].apply(
-            lambda i: f"💰 {_counts.get(int(i), {}).get('orcamentos', 0)}  "
-                      f"📎 {_counts.get(int(i), {}).get('anexos', 0)}"
+        df_grid["item"] = df_grid.apply(
+            lambda r: _item_label(r["id"], r.get("item", "")), axis=1
         )
+        df_grid["col_orc"] = df_grid["id"].apply(
+            lambda i: f"💰 {_counts.get(int(i), {}).get('orcamentos', 0)}"
+        )
+        df_grid["col_anx"] = df_grid["id"].apply(
+            lambda i: f"📎 {_counts.get(int(i), {}).get('anexos', 0)}"
+        )
+        # Coluna auxiliar (oculta): guarda qual aba abrir ao clicar
+        df_grid["_want_tab"] = ""
         # Mantém 'id' oculto para resolver a seleção/abertura do modal
-        df_grid = df_grid[[c for c in (_GRID_COLS + ["id"]) if c in df_grid.columns]]
+        df_grid = df_grid[[c for c in (_GRID_COLS + ["id", "_want_tab"]) if c in df_grid.columns]]
 
         gb = GridOptionsBuilder.from_dataframe(df_grid)
         gb.configure_default_column(
             editable=False, filter=True, sortable=True, resizable=True,
             suppressSizeToFit=False,
         )
-        gb.configure_column("acoes",            headerName=" ",
-                            editable=False, width=92, pinned="left",
-                            cellRenderer=action_renderer, suppressSizeToFit=True,
-                            filter=False, sortable=False)
         gb.configure_column("req",              headerName="Requisição",
-                            editable=False, width=110, pinned="left", suppressSizeToFit=True)
+                            editable=False, width=120, pinned="left", suppressSizeToFit=True,
+                            cellRenderer=req_renderer, filter=False)
         gb.configure_column("id",               hide=True)
         gb.configure_column("data_solicitacao", headerName="Dt. Solicitação",
                             width=130, suppressSizeToFit=True)
@@ -844,9 +979,13 @@ with aba_requisicoes:
         gb.configure_column("valor",            headerName="Valor (R$)",
                             type=["numericColumn"], width=120,
                             valueFormatter=currency_formatter)
-        gb.configure_column("anexos_orc",       headerName="Orç./Anexos",
-                            editable=False, width=120, suppressSizeToFit=True,
-                            filter=False)
+        gb.configure_column("col_orc",          headerName="Orç.",
+                            editable=False, width=80, suppressSizeToFit=True,
+                            filter=False, sortable=False, cellRenderer=orc_renderer)
+        gb.configure_column("col_anx",          headerName="Anexos",
+                            editable=False, width=90, suppressSizeToFit=True,
+                            filter=False, sortable=False, cellRenderer=anx_renderer)
+        gb.configure_column("_want_tab",        hide=True)
         gb.configure_column(
             "situacao",
             headerName="Status",
@@ -892,6 +1031,7 @@ with aba_requisicoes:
 
         # ── Detectar seleção para abrir dialog ────────────────────────────
         selected_rows = grid_result.get("selected_rows")
+        selected_row = resolve_selected_row(selected_rows)
         selected_id = resolve_selected_req_id(selected_rows)
         if selected_id is None:
             # Sem seleção (ex.: após remontar a grid): libera reabrir qualquer linha
@@ -899,6 +1039,7 @@ with aba_requisicoes:
         elif selected_id != st.session_state.get("_last_dialog_req_id"):
             st.session_state.selected_req_id = selected_id
             st.session_state.open_req_dialog = True
+            st.session_state["_want_tab"] = (selected_row or {}).get("_want_tab") or "dados"
 
         if st.session_state.get("open_req_dialog") and st.session_state.get("selected_req_id") is not None:
             st.session_state.open_req_dialog = False
@@ -906,7 +1047,10 @@ with aba_requisicoes:
             # Bump no nonce → na próxima execução a grid remonta sem seleção,
             # permitindo reabrir a mesma requisição depois de fechar o modal.
             st.session_state["_grid_nonce"] = st.session_state.get("_grid_nonce", 0) + 1
-            open_requisicao_dialog(int(st.session_state["selected_req_id"]))
+            open_requisicao_dialog(
+                int(st.session_state["selected_req_id"]),
+                want_tab=st.session_state.get("_want_tab", "dados"),
+            )
 
     else:
         st.info("Nenhum registro encontrado com os filtros atuais.")

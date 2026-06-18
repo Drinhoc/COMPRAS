@@ -179,6 +179,16 @@ def create_orcamento(data: dict[str, Any]) -> None:
         conn.execute(query, data)
 
 
+def update_orcamento(orcamento_id: int, data: dict[str, Any]) -> None:
+    if not data:
+        return
+    set_clause = ", ".join(f"{k} = :{k}" for k in data)
+    params = dict(data)
+    params["id"] = orcamento_id
+    with ENGINE.begin() as conn:
+        conn.execute(text(f"UPDATE orcamentos SET {set_clause} WHERE id = :id"), params)
+
+
 def delete_orcamento(orcamento_id: int) -> None:
     with ENGINE.begin() as conn:
         conn.execute(text("DELETE FROM orcamentos WHERE id = :id"), {"id": orcamento_id})
@@ -230,35 +240,104 @@ def list_aprovacoes(requisicao_id: int) -> list[dict[str, Any]]:
 
 
 def create_aprovacao(data: dict[str, Any]) -> None:
+    data = {
+        "requisicao_id": data["requisicao_id"],
+        "orcamento_id": data.get("orcamento_id"),
+        "acao": data["acao"],
+        "comentario": data.get("comentario"),
+        "aprovador": data.get("aprovador"),
+    }
     query = text(
         """
-        INSERT INTO aprovacoes (requisicao_id, acao, comentario, aprovador)
-        VALUES (:requisicao_id, :acao, :comentario, :aprovador)
+        INSERT INTO aprovacoes (requisicao_id, orcamento_id, acao, comentario, aprovador)
+        VALUES (:requisicao_id, :orcamento_id, :acao, :comentario, :aprovador)
         """
     )
     with ENGINE.begin() as conn:
         conn.execute(query, data)
 
 
+# --- Itens estruturados ---
+def list_itens(requisicao_id: int) -> list[dict[str, Any]]:
+    query = "SELECT * FROM itens WHERE requisicao_id = :rid ORDER BY id"
+    with ENGINE.connect() as conn:
+        cursor = conn.execute(text(query), {"rid": requisicao_id})
+        return [dict(r._mapping) for r in cursor.fetchall()]
+
+
+def replace_itens(requisicao_id: int, rows: list[dict[str, Any]]) -> None:
+    """Substitui todos os itens da requisição pelos informados (vindo do data_editor)."""
+    insert = text(
+        """
+        INSERT INTO itens (requisicao_id, descricao, quantidade, unidade, valor_unitario, observacao)
+        VALUES (:requisicao_id, :descricao, :quantidade, :unidade, :valor_unitario, :observacao)
+        """
+    )
+    with ENGINE.begin() as conn:
+        conn.execute(text("DELETE FROM itens WHERE requisicao_id = :rid"), {"rid": requisicao_id})
+        for row in rows:
+            descricao = (row.get("descricao") or "").strip()
+            if not descricao:
+                continue
+            conn.execute(
+                insert,
+                {
+                    "requisicao_id": requisicao_id,
+                    "descricao": descricao,
+                    "quantidade": row.get("quantidade"),
+                    "unidade": (row.get("unidade") or "").strip() or None,
+                    "valor_unitario": row.get("valor_unitario"),
+                    "observacao": (row.get("observacao") or "").strip() or None,
+                },
+            )
+
+
+def fetch_itens_resumo(requisicao_ids: list[int]) -> dict[int, dict[str, Any]]:
+    """Retorna {req_id: {'primeiro': descricao, 'total': n}} para a lista."""
+    result: dict[int, dict[str, Any]] = {}
+    if not requisicao_ids:
+        return result
+    placeholders = ", ".join(f":id{i}" for i in range(len(requisicao_ids)))
+    params = {f"id{i}": int(rid) for i, rid in enumerate(requisicao_ids)}
+    with ENGINE.connect() as conn:
+        cursor = conn.execute(
+            text(
+                f"SELECT requisicao_id, descricao, id FROM itens "
+                f"WHERE requisicao_id IN ({placeholders}) ORDER BY requisicao_id, id"
+            ),
+            params,
+        )
+        for row in cursor.fetchall():
+            rid = int(row._mapping["requisicao_id"])
+            entry = result.setdefault(rid, {"primeiro": row._mapping["descricao"], "total": 0})
+            entry["total"] += 1
+    return result
+
+
 def delete_all_data() -> None:
     """Remove todos os dados do sistema (requisições e históricos relacionados)."""
     with ENGINE.begin() as conn:
         if ENGINE.dialect.name == "postgresql":
-            conn.execute(text("TRUNCATE TABLE aprovacoes, anexos, orcamentos, requisicoes RESTART IDENTITY CASCADE"))
+            conn.execute(text("TRUNCATE TABLE aprovacoes, anexos, orcamentos, itens, requisicoes RESTART IDENTITY CASCADE"))
             return
 
         conn.execute(text("DELETE FROM aprovacoes"))
         conn.execute(text("DELETE FROM anexos"))
         conn.execute(text("DELETE FROM orcamentos"))
+        conn.execute(text("DELETE FROM itens"))
         conn.execute(text("DELETE FROM requisicoes"))
 
         if ENGINE.dialect.name == "sqlite":
-            conn.execute(
-                text(
-                    "DELETE FROM sqlite_sequence "
-                    "WHERE name IN ('requisicoes', 'orcamentos', 'anexos', 'aprovacoes')"
+            seq_exists = conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table' AND name='sqlite_sequence'")
+            ).fetchone()
+            if seq_exists:
+                conn.execute(
+                    text(
+                        "DELETE FROM sqlite_sequence "
+                        "WHERE name IN ('requisicoes', 'orcamentos', 'anexos', 'aprovacoes', 'itens')"
+                    )
                 )
-            )
 
 
 def list_projetos() -> list[str]:
