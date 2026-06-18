@@ -51,7 +51,7 @@ Há **3 perfis**, definidos no mapa central `src/auth.py → PERMISSOES` (fácil
 | Perfil | O que pode |
 |---|---|
 | **Administrador (ADM)** | Tudo: cria/edita/exclui, aprova, importa, vê logs e o **painel ⚙️ Admin** (gerencia usuários, vê a conexão do banco). |
-| **Gestor** | Vê tudo (dashboards/análises/projetos), **aprova/reprova** e vê o log de **🗒️ Atividades**. Não cria/edita/exclui e não vê o painel Admin. |
+| **Gestor** | Vê tudo (dashboards/análises/projetos), **cria/edita**, **aprova/reprova** e vê o log de **🗒️ Atividades**. Não exclui, não importa e não vê o painel Admin. |
 | **Comprador** | Cria/edita requisições, itens, orçamentos, anexos, aprova e gera pedido. Não exclui, não importa e não vê logs/Admin. *(início mais permissivo — pode ser apertado em `PERMISSOES`)*. |
 
 > **Log de atividades:** todas as ações relevantes (login, criar/editar/excluir, aprovar, anexar, gerar pedido, gerenciar usuários) são registradas com **quem fez e quando**, visíveis na aba **🗒️ Atividades** (Gestor/ADM).

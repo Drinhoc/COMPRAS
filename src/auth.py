@@ -14,7 +14,7 @@ PERMISSOES: dict[str, dict[str, bool]] = {
         "admin": True, "logs": True, "ver_financeiro": True, "importar": True,
     },
     "GESTOR": {
-        "editar": False, "excluir": False, "aprovar": True,
+        "editar": True, "excluir": False, "aprovar": True,
         "admin": False, "logs": True, "ver_financeiro": True, "importar": False,
     },
     # Início mais permissivo (quase como Gestor), porém pode editar e não vê logs.
