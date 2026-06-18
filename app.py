@@ -55,12 +55,6 @@ if is_sqlite_url(database_url):
         st.stop()
 init_db()
 
-# Indicador de persistência (diagnóstico rápido)
-if is_sqlite_url(database_url):
-    st.sidebar.caption("🗄️ Banco: **SQLite (local/efêmero)**")
-else:
-    st.sidebar.caption("🗄️ Banco: **PostgreSQL (persistente)** ✅")
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -985,12 +979,31 @@ with aba_requisicoes:
         req_filters["situacao"] = ["Solicitado", "Cotação", "Aprovação", "Comprado"]
 
     total_registros = crud.count_requisicoes(req_filters)
-    page_size = st.selectbox("Registros por página", [10, 20, 50], index=1)
+
+    # Ordenação (server-side, vale para todas as páginas)
+    _ord_opcoes = {
+        "Data Solicitação": "data_solicitacao",
+        "Requisição (ID)": "id",
+        "Empresa": "empresa",
+        "Item": "item",
+        "Fornecedor": "fornecedor",
+        "Valor": "valor",
+        "Status": "situacao",
+    }
+    oc1, oc2, oc3 = st.columns([2, 1, 1])
+    _ord_label = oc1.selectbox("Ordenar por", list(_ord_opcoes.keys()), index=0)
+    _ord_dir = oc2.radio("Sentido", ["Decrescente", "Crescente"], horizontal=True)
+    page_size = oc3.selectbox("Registros por página", [10, 20, 50], index=1)
+
     total_paginas = max(1, (total_registros + page_size - 1) // page_size)
     pagina = st.number_input("Página", min_value=1, max_value=total_paginas, value=1)
     offset = (pagina - 1) * page_size
 
-    registros = crud.fetch_requisicoes(req_filters, limit=page_size, offset=offset)
+    registros = crud.fetch_requisicoes(
+        req_filters, limit=page_size, offset=offset,
+        order_by=_ord_opcoes[_ord_label],
+        descending=(_ord_dir == "Decrescente"),
+    )
     df_view = pd.DataFrame(registros)
 
     if not df_view.empty:
@@ -1132,10 +1145,13 @@ with aba_requisicoes:
                             valueFormatter=date_formatter)
         gb.configure_column("empresa",          headerName="Empresa",   width=150)
         gb.configure_column("item",             headerName="Item",      width=260)
-        gb.configure_column("fornecedor",       headerName="Fornecedor", width=160)
+        gb.configure_column("fornecedor",       headerName="Fornecedor", width=160,
+                            editable=True)
         gb.configure_column("valor",            headerName="Valor (R$)",
                             type=["numericColumn"], width=120,
-                            valueFormatter=currency_formatter)
+                            valueFormatter=currency_formatter,
+                            editable=True,
+                            cellEditor="agNumberCellEditor")
         gb.configure_column("col_orc",          headerName="Orç.",
                             editable=False, width=80, suppressSizeToFit=True,
                             filter=False, sortable=False, cellRenderer=orc_renderer)
@@ -1151,6 +1167,7 @@ with aba_requisicoes:
             editable=True,
             cellEditor="agSelectCellEditor",
             cellEditorParams={"values": STATUS_LIST},
+            singleClickEdit=True,
         )
         gb.configure_selection("single", use_checkbox=False)
         gb.configure_grid_options(
@@ -1162,6 +1179,10 @@ with aba_requisicoes:
             stopEditingWhenCellsLoseFocus=True,
         )
 
+        st.caption(
+            "✏️ Clique numa célula de **Status**, **Fornecedor** ou **Valor** para editar; "
+            "ao sair da célula, salva automaticamente. Clique no **código REQ** para abrir os detalhes."
+        )
         grid_result = AgGrid(
             df_grid,
             gridOptions=gb.build(),
@@ -1173,18 +1194,35 @@ with aba_requisicoes:
             height=520,
         )
 
-        # ── Detectar mudança de status inline ────────────────────────────
+        # ── Detectar edição inline (Status, Fornecedor, Valor) ────────────
         df_returned = grid_result.get("data")
         if df_returned is not None and not df_returned.empty and "id" in df_returned.columns:
+            _editaveis = ["situacao", "fornecedor", "valor"]
             for _, ret_row in df_returned.iterrows():
                 _rid = ret_row.get("id")
-                _new_sit = ret_row.get("situacao", "")
-                if _rid is None or not _new_sit:
+                if _rid is None:
                     continue
-                _orig = df_grid.loc[df_grid["id"] == _rid, "situacao"]
-                if not _orig.empty and str(_orig.iloc[0]) != str(_new_sit):
-                    crud.update_requisicao(int(_rid), {"situacao": str(_new_sit)})
-                    st.toast(f"Status #{int(_rid)} → {_new_sit}", icon="✅")
+                _orig_row = df_grid.loc[df_grid["id"] == _rid]
+                if _orig_row.empty:
+                    continue
+                _updates: dict = {}
+                for _col in _editaveis:
+                    _new = ret_row.get(_col)
+                    _old = _orig_row.iloc[0].get(_col)
+                    if _col == "valor":
+                        _nf = None if _new in (None, "") else float(_new)
+                        _of = None if _old in (None, "") else float(_old)
+                        if _nf != _of:
+                            _updates["valor"] = _nf
+                    elif _col == "situacao":
+                        if _new and str(_old) != str(_new):
+                            _updates["situacao"] = str(_new)
+                    else:  # fornecedor
+                        if (str(_new or "").strip()) != (str(_old or "").strip()):
+                            _updates["fornecedor"] = str(_new or "").strip()
+                if _updates:
+                    crud.update_requisicao(int(_rid), _updates)
+                    st.toast(f"REQ-{int(_rid):04d} atualizada.", icon="✅")
                     st.session_state.pop("_last_dialog_req_id", None)
                     st.rerun()
 

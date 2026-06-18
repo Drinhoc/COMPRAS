@@ -60,9 +60,26 @@ def build_filters(filters: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     return where_clause, params
 
 
-def fetch_requisicoes(filters: dict[str, Any], limit: int, offset: int) -> list[dict[str, Any]]:
+_ORDER_COLS = {
+    "id", "data_solicitacao", "data_compra", "empresa", "item",
+    "fornecedor", "valor", "situacao", "projeto", "setor",
+}
+
+
+def fetch_requisicoes(
+    filters: dict[str, Any],
+    limit: int,
+    offset: int,
+    order_by: str = "id",
+    descending: bool = True,
+) -> list[dict[str, Any]]:
     where_clause, params = build_filters(filters)
-    query = f"SELECT * FROM requisicoes{where_clause} ORDER BY id DESC LIMIT :limit OFFSET :offset"
+    col = order_by if order_by in _ORDER_COLS else "id"
+    direction = "DESC" if descending else "ASC"
+    query = (
+        f"SELECT * FROM requisicoes{where_clause} "
+        f"ORDER BY {col} {direction}, id DESC LIMIT :limit OFFSET :offset"
+    )
     params.update({"limit": limit, "offset": offset})
     with ENGINE.connect() as conn:
         cursor = conn.execute(text(query), params)
