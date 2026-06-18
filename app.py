@@ -11,7 +11,7 @@ import streamlit as st
 from st_aggrid import AgGrid, GridOptionsBuilder, JsCode
 from st_aggrid.shared import GridUpdateMode
 
-from src import crud, excel_io, metrics
+from src import crud, excel_io, metrics, pedido
 from src.constants import COLUMN_ORDER, DISPLAY_NAMES, STATUS_LIST
 from src.db import get_database_url, init_db, insert_many, is_sqlite_url
 
@@ -478,6 +478,7 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
         ("orc", "💰 Orçamentos"),
         ("aprov", "✅ Aprovações"),
         ("anexos", "📁 Anexos"),
+        ("pedido", "🧾 Pedido"),
     ]
     # A aba desejada vai para primeiro (st.tabs ativa a primeira); demais mantêm a ordem.
     if want_tab in dict(tab_defs):
@@ -801,6 +802,101 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
                 if run_safe(crud.delete_anexo, int(anexo_id),
                             sucesso="Anexo excluído.", icone="🗑️"):
                     st.rerun()
+
+    with tabs["pedido"]:
+        st.markdown("##### Gerar Pedido de Compra (PDF)")
+        empresa_emissora = st.selectbox(
+            "Empresa emissora",
+            options=list(pedido.EMPRESAS.keys()),
+            format_func=lambda k: pedido.EMPRESAS[k]["razao_social"],
+            key=f"ped_emp_{selected_req_id}",
+        )
+        pc1, pc2 = st.columns(2)
+        ped_numero = pc1.text_input("Número do pedido", value=f"REQ-{selected_req_id:04d}",
+                                    key=f"ped_num_{selected_req_id}")
+        ped_data = pc2.date_input("Data", value=date.today(), key=f"ped_data_{selected_req_id}")
+
+        st.markdown("**Destinatário (fornecedor)**")
+        dc1, dc2 = st.columns(2)
+        d_empresa = dc1.text_input("Fornecedor", value=req_data.get("fornecedor") or "",
+                                   key=f"ped_forn_{selected_req_id}")
+        d_ac = dc2.text_input("A/C (vendedor)", key=f"ped_ac_{selected_req_id}")
+        d_cnpj = dc1.text_input("CNPJ", key=f"ped_cnpj_{selected_req_id}")
+        d_email = dc2.text_input("E-mail", key=f"ped_email_{selected_req_id}")
+        d_end = dc1.text_input("Endereço", key=f"ped_end_{selected_req_id}")
+        d_cidade = dc2.text_input("Cidade", key=f"ped_cid_{selected_req_id}")
+        d_cep = dc1.text_input("CEP", key=f"ped_cep_{selected_req_id}")
+
+        st.markdown("**Itens do pedido**")
+        _itens_ped = crud.list_itens(selected_req_id)
+        if _itens_ped:
+            _df_ped = pd.DataFrame([
+                {"quant": i.get("quantidade"), "descricao": i.get("descricao"),
+                 "valor_unit": i.get("valor_unitario"), "prazo": ""}
+                for i in _itens_ped
+            ])
+        else:
+            _df_ped = pd.DataFrame([
+                {"quant": req_data.get("qtde") or 1, "descricao": req_data.get("item") or "",
+                 "valor_unit": req_data.get("valor"), "prazo": req_data.get("entrega") or ""}
+            ])
+        edited_ped = st.data_editor(
+            _df_ped, key=f"ped_itens_{selected_req_id}", num_rows="dynamic",
+            use_container_width=True, hide_index=True,
+            column_config={
+                "quant": st.column_config.NumberColumn("Quant.", min_value=0, format="%g"),
+                "descricao": st.column_config.TextColumn("Item / Descrição", width="large"),
+                "valor_unit": st.column_config.NumberColumn("Valor Unit. (R$)", min_value=0, format="%.2f"),
+                "prazo": st.column_config.TextColumn("Prazo de entrega"),
+            },
+        )
+
+        # Condições: tenta pré-preencher pelo orçamento aprovado, se houver
+        _orcs_ped = crud.list_orcamentos(selected_req_id)
+        _orc_aprov = next((o for o in _orcs_ped if (o.get("status_orcamento") or "").upper().startswith("APROVADO")), None)
+        pcc1, pcc2 = st.columns(2)
+        ped_desc = pcc1.number_input("Desconto (R$)", min_value=0.0,
+                                     value=float(req_data.get("valor_desconto") or 0),
+                                     key=f"ped_desc_{selected_req_id}")
+        ped_pgto = pcc2.text_input("Condições de pagamento",
+                                   value=(_orc_aprov or {}).get("condicoes_pagamento") or "28 DDL",
+                                   key=f"ped_pgto_{selected_req_id}")
+        ped_entrega = st.text_input("Entrega", value=req_data.get("entrega") or "Alinhar com o setor solicitante",
+                                    key=f"ped_entrega_{selected_req_id}")
+        ped_obs = st.text_area("Observações", key=f"ped_obs_{selected_req_id}")
+
+        if st.button("🧾 Gerar PDF do pedido", key=f"ped_gerar_{selected_req_id}",
+                     use_container_width=True, type="primary"):
+            dados_ped = {
+                "numero": ped_numero,
+                "data": ped_data.strftime("%d/%m/%Y") if isinstance(ped_data, date) else str(ped_data),
+                "destinatario": {
+                    "empresa": d_empresa, "ac": d_ac, "email": d_email, "cnpj": d_cnpj,
+                    "endereco": d_end, "cidade": d_cidade, "cep": d_cep,
+                },
+                "itens": edited_ped.to_dict("records"),
+                "desconto": ped_desc,
+                "condicoes_pagamento": ped_pgto,
+                "entrega": ped_entrega,
+                "observacoes": ped_obs,
+            }
+            try:
+                st.session_state[f"_pdf_{selected_req_id}"] = pedido.gerar_pedido_pdf(empresa_emissora, dados_ped)
+                st.session_state[f"_pdf_nome_{selected_req_id}"] = f"Pedido_{ped_numero}.pdf"
+            except Exception as exc:  # noqa: BLE001
+                st.error(f"Erro ao gerar o PDF: {exc}")
+
+        _pdf_bytes = st.session_state.get(f"_pdf_{selected_req_id}")
+        if _pdf_bytes:
+            st.success("Pedido gerado! Baixe abaixo.")
+            st.download_button(
+                "⬇️ Baixar pedido (PDF)",
+                data=_pdf_bytes,
+                file_name=st.session_state.get(f"_pdf_nome_{selected_req_id}", "pedido.pdf"),
+                mime="application/pdf",
+                key=f"ped_dl_{selected_req_id}",
+                use_container_width=True,
+            )
 
 
 # ---------------------------------------------------------------------------
