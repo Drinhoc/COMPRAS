@@ -17,6 +17,8 @@ from src.db import get_database_url, init_db, insert_many, is_sqlite_url
 
 
 st.set_page_config(page_title="Controle de Compras", layout="wide")
+
+
 st.markdown(
     """
     <style>
@@ -58,8 +60,15 @@ init_db()
 # Helpers
 # ---------------------------------------------------------------------------
 
-def format_currency(value: float) -> str:
-    return f"R$ {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+def format_currency(value: object) -> str:
+    """Formata no padrão monetário brasileiro: R$ 1.234,56 (— se vazio)."""
+    if value is None or value == "":
+        return "—"
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    return "R$ " + f"{num:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
 def parse_date_input(value: str | None) -> date | None:
@@ -496,7 +505,7 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
                 edited_itens["quantidade"].fillna(0).astype(float)
                 * edited_itens["valor_unitario"].fillna(0).astype(float)
             ).sum()
-            st.metric("Total previsto dos itens", f"R$ {_tot:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+            st.metric("Total previsto dos itens", format_currency(_tot))
         except Exception:
             pass
 
@@ -508,8 +517,38 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
 
     with tabs["orc"]:
         orcs = crud.list_orcamentos(selected_req_id)
+        _status_icon = {"APROVADO": "✅", "APROVADO PARCIAL": "🟡", "REJEITADO": "❌"}
         if orcs:
-            st.dataframe(pd.DataFrame(orcs), use_container_width=True, hide_index=True)
+            for o in orcs:
+                _oid = int(o["id"])
+                cab, cval, cprz, cst, cok, cno = st.columns([3, 2, 2, 2, 1, 1])
+                _icon = _status_icon.get((o.get("status_orcamento") or "").upper(), "•")
+                cab.markdown(f"{_icon} **#{_oid}** · {o.get('fornecedor') or '—'}")
+                cval.markdown(format_currency(o.get("valor")))
+                cprz.markdown(o.get("prazo_entrega") or "—")
+                cst.caption(o.get("status_orcamento") or "RECEBIDO")
+                if cok.button("✅", key=f"ok_orc_{selected_req_id}_{_oid}", help="Aprovar este orçamento"):
+                    crud.update_orcamento(_oid, {"status_orcamento": "APROVADO"})
+                    crud.create_aprovacao({
+                        "requisicao_id": selected_req_id, "orcamento_id": _oid,
+                        "acao": "APROVADO", "comentario": "Aprovado na lista de orçamentos.",
+                        "aprovador": "GESTOR",
+                    })
+                    if req_data:
+                        _upd = dict(req_data); _upd["situacao"] = "Comprado"
+                        crud.update_requisicao(selected_req_id, _upd)
+                    st.toast(f"Orçamento #{_oid} aprovado.", icon="✅")
+                    st.rerun()
+                if cno.button("❌", key=f"no_orc_{selected_req_id}_{_oid}", help="Rejeitar este orçamento"):
+                    crud.update_orcamento(_oid, {"status_orcamento": "REJEITADO"})
+                    crud.create_aprovacao({
+                        "requisicao_id": selected_req_id, "orcamento_id": _oid,
+                        "acao": "REPROVADO", "comentario": "Rejeitado na lista de orçamentos.",
+                        "aprovador": "GESTOR",
+                    })
+                    st.toast(f"Orçamento #{_oid} rejeitado.", icon="❌")
+                    st.rerun()
+            st.markdown("---")
         else:
             st.info("Nenhum orçamento cadastrado para esta requisição.")
 
@@ -553,8 +592,7 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
         orcs_aprov = crud.list_orcamentos(selected_req_id)
         # Mapa id -> rótulo legível do orçamento
         orc_label = {
-            o["id"]: f"Orç. #{o['id']} · {o.get('fornecedor') or 's/ fornecedor'} · "
-                     f"R$ {(o.get('valor') or 0):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            o["id"]: f"Orç. #{o['id']} · {o.get('fornecedor') or 's/ fornecedor'} · {format_currency(o.get('valor'))}"
             for o in orcs_aprov
         }
 
@@ -1448,7 +1486,10 @@ with aba_projetos:
             else:
                 _df_orcs = pd.DataFrame(orcs_projeto)
                 _orc_cols = [c for c in ["id", "item", "empresa", "fornecedor", "valor", "status_orcamento", "prazo_entrega"] if c in _df_orcs.columns]
-                st.dataframe(_df_orcs[_orc_cols], use_container_width=True, hide_index=True)
+                _df_orcs_show = _df_orcs[_orc_cols].copy()
+                if "valor" in _df_orcs_show.columns:
+                    _df_orcs_show["valor"] = _df_orcs_show["valor"].apply(format_currency)
+                st.dataframe(_df_orcs_show, use_container_width=True, hide_index=True)
 
 
 # ---- Importar ----
