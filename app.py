@@ -1189,8 +1189,7 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
 # ---------------------------------------------------------------------------
 
 st.markdown(
-    "<h1 style='margin-bottom:0'>Controle de Compras "
-    "<span style='color:#43A33B'>·</span> <span style='color:#F47920'>Bluesun</span></h1>"
+    "<h1 style='margin-bottom:0'>Controle de Compras</h1>"
     "<p style='color:#6b7280;margin-top:2px'>Requisições, cotações, aprovações e pedidos num só lugar.</p>",
     unsafe_allow_html=True,
 )
