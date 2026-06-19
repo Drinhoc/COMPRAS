@@ -54,7 +54,6 @@ EMPRESAS: dict[str, dict[str, Any]] = {
             "CEP: 13480-309 — Limeira/SP",
             "CNPJ: 02.817.917/0001-09   I.E: 135.989.199.117",
             "Boleto e NF para: nfe@engecomprefrigeracao.com.br",
-            "A/C: Eng. Bruno Luís de Araújo",
         ],
         "email_nf": "nfe@engecomprefrigeracao.com.br",
         "assinatura": "COMPRAS — Engecomp Refrigeração Industrial",
@@ -104,8 +103,16 @@ def gerar_pedido_pdf(empresa_key: str, pedido: dict[str, Any]) -> bytes:
     if os.path.exists(logo_path):
         img = Image(logo_path)
         ratio = img.imageHeight / float(img.imageWidth)
-        img.drawWidth = 45 * mm
-        img.drawHeight = 45 * mm * ratio
+        # Encaixa o logo numa faixa de cabeçalho consistente entre as empresas:
+        # limita largura E altura preservando a proporção (evita logo quadrado gigante).
+        max_w, max_h = 42 * mm, 20 * mm
+        w = max_w
+        h = w * ratio
+        if h > max_h:
+            h = max_h
+            w = h / ratio
+        img.drawWidth = w
+        img.drawHeight = h
         logo_flow = img
 
     dados = [Paragraph(f"<b>{empresa['razao_social']}</b>", normal)]

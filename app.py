@@ -1013,6 +1013,21 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
                 use_container_width=True,
             )
 
+        st.markdown("---")
+        _sit_atual = (req_data or {}).get("situacao") or "—"
+        st.caption(f"Situação atual da requisição: **{_sit_atual}**")
+        if PODE_EDITAR and _sit_atual not in ("Comprado", "Concluído", "Cancelado"):
+            st.caption("Use abaixo para marcar como comprada manualmente, sem precisar gerar o pedido.")
+            if st.button("✅ Marcar como Comprado (manual)", key=f"mark_comprado_{selected_req_id}", use_container_width=True):
+                _upd = dict(req_data)
+                _upd["situacao"] = "Comprado"
+                if not (_upd.get("data_compra") or ""):
+                    _upd["data_compra"] = date.today().isoformat()
+                if run_safe(crud.update_requisicao, selected_req_id, _upd,
+                            sucesso="Requisição marcada como Comprado."):
+                    registrar_log("MARCOU_COMPRADO_MANUAL", "requisicao", selected_req_id)
+                    st.rerun()
+
 
 # ---------------------------------------------------------------------------
 # Main App
