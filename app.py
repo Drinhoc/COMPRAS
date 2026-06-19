@@ -778,49 +778,92 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
         st.markdown("##### Registrar Aprovação")
         if not PODE_APROVAR:
             st.info("👁️ Seu perfil não pode registrar aprovações.")
-        elif not orcs_aprov:
-            st.warning("Cadastre ao menos um orçamento na aba 💰 Orçamentos para aprovar.")
         else:
-            orc_escolhido = st.selectbox(
-                "Orçamento",
-                options=list(orc_label.keys()),
-                format_func=lambda i: orc_label[i],
-                key=f"apr_orc_{selected_req_id}",
-            )
-            acao = st.selectbox(
-                "Decisão",
-                ["APROVADO", "APROVADO PARCIAL", "REPROVADO", "COMENTÁRIO"],
-                key=f"acao_{selected_req_id}",
-            )
-            if acao == "APROVADO PARCIAL":
-                st.caption("Descreva no comentário o que foi aprovado (ex.: 'Orç. 3 itens 5 e 7; restante no Orç. 2').")
-            aprovador = st.text_input("Aprovador", value=USER["nome"], key=f"apr_{selected_req_id}")
-            comentario = st.text_area("Comentário / detalhamento", key=f"obs_apr_{selected_req_id}")
-            if st.button("Registrar aprovação", key=f"btn_apr_{selected_req_id}", use_container_width=True, type="primary"):
-                crud.create_aprovacao(
-                    {
-                        "requisicao_id": selected_req_id,
-                        "orcamento_id": int(orc_escolhido),
-                        "acao": acao,
-                        "comentario": comentario.strip(),
-                        "aprovador": aprovador.strip() or "GESTOR",
-                    }
+            if orcs_aprov:
+                orc_escolhido = st.selectbox(
+                    "Orçamento",
+                    options=list(orc_label.keys()),
+                    format_func=lambda i: orc_label[i],
+                    key=f"apr_orc_{selected_req_id}",
                 )
-                # Atualiza o status do orçamento conforme a decisão
-                status_map = {
-                    "APROVADO": "APROVADO",
-                    "APROVADO PARCIAL": "APROVADO PARCIAL",
-                    "REPROVADO": "REJEITADO",
-                }
-                if acao in status_map:
-                    crud.update_orcamento(int(orc_escolhido), {"status_orcamento": status_map[acao]})
-                if acao in ("APROVADO", "APROVADO PARCIAL") and req_data:
-                    updated = dict(req_data)
-                    updated["situacao"] = "Aprovação"
-                    crud.update_requisicao(selected_req_id, updated)
-                registrar_log(acao, "orcamento", int(orc_escolhido), f"REQ {selected_req_id}")
-                st.toast("Aprovação registrada.", icon="✅")
-                st.rerun()
+                acao = st.selectbox(
+                    "Decisão",
+                    ["APROVADO", "APROVADO PARCIAL", "REPROVADO", "COMENTÁRIO"],
+                    key=f"acao_{selected_req_id}",
+                )
+                if acao == "APROVADO PARCIAL":
+                    st.caption("Descreva no comentário o que foi aprovado (ex.: 'Orç. 3 itens 5 e 7; restante no Orç. 2').")
+                aprovador = st.text_input("Aprovador", value=USER["nome"], key=f"apr_{selected_req_id}")
+                comentario = st.text_area("Comentário / detalhamento", key=f"obs_apr_{selected_req_id}")
+                if st.button("Registrar aprovação", key=f"btn_apr_{selected_req_id}", use_container_width=True, type="primary"):
+                    crud.create_aprovacao(
+                        {
+                            "requisicao_id": selected_req_id,
+                            "orcamento_id": int(orc_escolhido),
+                            "acao": acao,
+                            "comentario": comentario.strip(),
+                            "aprovador": aprovador.strip() or "GESTOR",
+                        }
+                    )
+                    # Atualiza o status do orçamento conforme a decisão
+                    status_map = {
+                        "APROVADO": "APROVADO",
+                        "APROVADO PARCIAL": "APROVADO PARCIAL",
+                        "REPROVADO": "REJEITADO",
+                    }
+                    if acao in status_map:
+                        crud.update_orcamento(int(orc_escolhido), {"status_orcamento": status_map[acao]})
+                    if acao in ("APROVADO", "APROVADO PARCIAL") and req_data:
+                        updated = dict(req_data)
+                        updated["situacao"] = "Aprovação"
+                        crud.update_requisicao(selected_req_id, updated)
+                    registrar_log(acao, "orcamento", int(orc_escolhido), f"REQ {selected_req_id}")
+                    st.toast("Aprovação registrada.", icon="✅")
+                    st.rerun()
+            else:
+                st.caption("Sem orçamentos cadastrados — aprove direto pelo valor abaixo, "
+                           "ou cadastre orçamentos na aba 💰 Orçamentos.")
+
+            # ── Aprovação direta (sem orçamento, só o valor) ──────────────────
+            with st.expander("✅ Aprovar sem orçamento (valor direto)", expanded=not orcs_aprov):
+                _val_atual = float(req_data.get("valor") or 0) if req_data else 0.0
+                val_direto = st.number_input(
+                    "Valor aprovado (R$)", min_value=0.0, value=_val_atual,
+                    key=f"apr_val_direto_{selected_req_id}",
+                    help="Ao aprovar, este valor é gravado na requisição.",
+                )
+                aprovador_d = st.text_input("Aprovador", value=USER["nome"], key=f"apr_d_{selected_req_id}")
+                coment_d = st.text_area("Comentário (opcional)", key=f"obs_apr_d_{selected_req_id}")
+                _dca, _dcb = st.columns(2)
+                if _dca.button("✅ Aprovar requisição", key=f"btn_apr_direto_{selected_req_id}",
+                               use_container_width=True, type="primary"):
+                    def _aprovar_direto():
+                        if req_data:
+                            _u = dict(req_data)
+                            _u["situacao"] = "Aprovação"
+                            _u["valor"] = val_direto
+                            crud.update_requisicao(selected_req_id, _u)
+                        crud.create_aprovacao({
+                            "requisicao_id": selected_req_id, "orcamento_id": None,
+                            "acao": "APROVADO",
+                            "comentario": coment_d.strip() or "Aprovado sem orçamento.",
+                            "aprovador": aprovador_d.strip() or USER["nome"],
+                        })
+                    if run_safe(_aprovar_direto, sucesso="Requisição aprovada."):
+                        registrar_log("APROVOU_SEM_ORCAMENTO", "requisicao", selected_req_id)
+                        st.rerun()
+                if _dcb.button("❌ Reprovar requisição", key=f"btn_rep_direto_{selected_req_id}",
+                               use_container_width=True):
+                    def _reprovar_direto():
+                        crud.create_aprovacao({
+                            "requisicao_id": selected_req_id, "orcamento_id": None,
+                            "acao": "REPROVADO",
+                            "comentario": coment_d.strip() or "Reprovado.",
+                            "aprovador": aprovador_d.strip() or USER["nome"],
+                        })
+                    if run_safe(_reprovar_direto, sucesso="Requisição reprovada.", icone="❌"):
+                        registrar_log("REPROVOU_SEM_ORCAMENTO", "requisicao", selected_req_id)
+                        st.rerun()
 
     with tabs["anexos"]:
         anexos = crud.list_anexos(selected_req_id)
@@ -930,29 +973,55 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
         d_cidade = dc2.text_input("Cidade", key=f"ped_cid_{selected_req_id}")
         d_cep = dc1.text_input("CEP", key=f"ped_cep_{selected_req_id}")
 
-        st.markdown("**Itens do pedido**")
-        _itens_ped = crud.list_itens(selected_req_id)
-        if _itens_ped:
-            _df_ped = pd.DataFrame([
-                {"quant": i.get("quantidade"), "descricao": i.get("descricao"),
-                 "valor_unit": i.get("valor_unitario"), "prazo": ""}
-                for i in _itens_ped
-            ])
-        else:
-            _df_ped = pd.DataFrame([
-                {"quant": req_data.get("qtde") or 1, "descricao": req_data.get("item") or "",
-                 "valor_unit": req_data.get("valor"), "prazo": req_data.get("entrega") or ""}
-            ])
-        edited_ped = st.data_editor(
-            _df_ped, key=f"ped_itens_{selected_req_id}", num_rows="dynamic",
-            use_container_width=True, hide_index=True,
-            column_config={
-                "quant": st.column_config.NumberColumn("Quant.", min_value=0, format="%g"),
-                "descricao": st.column_config.TextColumn("Item / Descrição", width="large"),
-                "valor_unit": st.column_config.NumberColumn("Valor Unit. (R$)", min_value=0, format="%.2f"),
-                "prazo": st.column_config.TextColumn("Prazo de entrega"),
-            },
+        _modo_ped = st.radio(
+            "Tipo de pedido",
+            ["Por itens (tabela)", "Serviço / valor fechado"],
+            horizontal=True,
+            key=f"ped_modo_{selected_req_id}",
+            help="Use 'Serviço / valor fechado' para serviços, locação, frete ou mão de obra, "
+                 "onde não faz sentido detalhar por item.",
         )
+        _is_servico = _modo_ped.startswith("Serviço")
+
+        edited_ped = None
+        ped_desc_serv = ""
+        ped_valor_serv = 0.0
+        if _is_servico:
+            ped_desc_serv = st.text_area(
+                "Descrição do serviço / escopo",
+                value=req_data.get("item") or "",
+                height=160,
+                key=f"ped_desc_serv_{selected_req_id}",
+            )
+            ped_valor_serv = st.number_input(
+                "Valor do serviço (R$)", min_value=0.0,
+                value=float(req_data.get("valor") or 0),
+                key=f"ped_valor_serv_{selected_req_id}",
+            )
+        else:
+            st.markdown("**Itens do pedido**")
+            _itens_ped = crud.list_itens(selected_req_id)
+            if _itens_ped:
+                _df_ped = pd.DataFrame([
+                    {"quant": i.get("quantidade"), "descricao": i.get("descricao"),
+                     "valor_unit": i.get("valor_unitario"), "prazo": ""}
+                    for i in _itens_ped
+                ])
+            else:
+                _df_ped = pd.DataFrame([
+                    {"quant": req_data.get("qtde") or 1, "descricao": req_data.get("item") or "",
+                     "valor_unit": req_data.get("valor"), "prazo": req_data.get("entrega") or ""}
+                ])
+            edited_ped = st.data_editor(
+                _df_ped, key=f"ped_itens_{selected_req_id}", num_rows="dynamic",
+                use_container_width=True, hide_index=True,
+                column_config={
+                    "quant": st.column_config.NumberColumn("Quant.", min_value=0, format="%g"),
+                    "descricao": st.column_config.TextColumn("Item / Descrição", width="large"),
+                    "valor_unit": st.column_config.NumberColumn("Valor Unit. (R$)", min_value=0, format="%.2f"),
+                    "prazo": st.column_config.TextColumn("Prazo de entrega"),
+                },
+            )
 
         # Condições: tenta pré-preencher pelo orçamento aprovado, se houver
         _orcs_ped = crud.list_orcamentos(selected_req_id)
@@ -977,7 +1046,10 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
                     "empresa": d_empresa, "ac": d_ac, "email": d_email, "cnpj": d_cnpj,
                     "endereco": d_end, "cidade": d_cidade, "cep": d_cep,
                 },
-                "itens": edited_ped.to_dict("records"),
+                "tipo": "servico" if _is_servico else "itens",
+                "itens": [] if _is_servico else edited_ped.to_dict("records"),
+                "descricao_servico": ped_desc_serv if _is_servico else "",
+                "valor_servico": ped_valor_serv if _is_servico else 0.0,
                 "desconto": ped_desc,
                 "condicoes_pagamento": ped_pgto,
                 "entrega": ped_entrega,

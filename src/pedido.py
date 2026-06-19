@@ -39,7 +39,7 @@ EMPRESAS: dict[str, dict[str, Any]] = {
             "Avenida Vitorino Arigone, 450 – Jardim Santa Bárbara",
             "CEP: 13480-309 — Limeira/SP",
             "CNPJ: 10.383.997/0001-60   I.E: 417.189.790.114",
-            "Telefone: (19) 3443-8228   Celular: (19) 99331-2871 (WhatsApp)",
+            "Telefone: (19) 3443-8228   Celular: (19) 99257-0904 (WhatsApp)",
             "Boleto e NF para: nfe@bluesundobrasil.com.br",
         ],
         "email_nf": "nfe@bluesundobrasil.com.br",
@@ -53,6 +53,7 @@ EMPRESAS: dict[str, dict[str, Any]] = {
             "Avenida Vitorino Arigone, 450 – Jardim Santa Bárbara",
             "CEP: 13480-309 — Limeira/SP",
             "CNPJ: 02.817.917/0001-09   I.E: 135.989.199.117",
+            "Celular: (19) 98242-0226 (WhatsApp)",
             "Boleto e NF para: nfe@engecomprefrigeracao.com.br",
         ],
         "email_nf": "nfe@engecomprefrigeracao.com.br",
@@ -164,40 +165,68 @@ def gerar_pedido_pdf(empresa_key: str, pedido: dict[str, Any]) -> bytes:
     ]))
     elems += [dest, Spacer(1, 8)]
 
-    # ── Tabela de itens ───────────────────────────────────────────────────
-    header = ["Quant.", "Item / Descrição", "Valor Unit.", "Valor Total", "Prazo de entrega"]
-    linhas = [[Paragraph(f"<b>{h}</b>", cell_c if i != 1 else cell) for i, h in enumerate(header)]]
-    subtotal = 0.0
-    for it in pedido.get("itens", []):
-        try:
-            q = float(it.get("quant") or 0)
-        except (TypeError, ValueError):
-            q = 0
-        try:
-            vu = float(it.get("valor_unit") or 0)
-        except (TypeError, ValueError):
-            vu = 0
-        total = q * vu
-        subtotal += total
-        linhas.append([
-            Paragraph(_num(q), cell_c),
-            Paragraph(str(it.get("descricao") or ""), cell),
-            Paragraph(_brl(vu), cell_r),
-            Paragraph(_brl(total), cell_r),
-            Paragraph(str(it.get("prazo") or ""), cell_c),
-        ])
+    tipo = (pedido.get("tipo") or "itens").lower()
 
-    tbl = Table(linhas, colWidths=[18 * mm, 82 * mm, 26 * mm, 26 * mm, 28 * mm], repeatRows=1)
-    tbl.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), cor),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#CCCCCC")),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F5F7FA")]),
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-    ]))
-    elems += [tbl]
+    if tipo == "servico":
+        # ── Modo serviço / valor fechado: descrição livre + valor único ──────
+        subtotal = float(pedido.get("valor_servico") or 0)
+        desc_txt = (pedido.get("descricao_servico") or "").strip() or "—"
+        serv_head = Table([[Paragraph("<b>Descrição do serviço</b>", cell)]], colWidths=[180 * mm])
+        serv_head.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), cor),
+            ("TEXTCOLOR", (0, 0), (-1, -1), colors.white),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ]))
+        serv_body = Table(
+            [[Paragraph(desc_txt.replace("\n", "<br/>"), cell)]],
+            colWidths=[180 * mm],
+        )
+        serv_body.setStyle(TableStyle([
+            ("BOX", (0, 0), (-1, -1), 0.4, colors.HexColor("#CCCCCC")),
+            ("BACKGROUND", (0, 0), (-1, -1), colors.white),
+            ("TOPPADDING", (0, 0), (-1, -1), 8),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ]))
+        elems += [serv_head, serv_body]
+    else:
+        # ── Tabela de itens ───────────────────────────────────────────────────
+        header = ["Quant.", "Item / Descrição", "Valor Unit.", "Valor Total", "Prazo de entrega"]
+        linhas = [[Paragraph(f"<b>{h}</b>", cell_c if i != 1 else cell) for i, h in enumerate(header)]]
+        subtotal = 0.0
+        for it in pedido.get("itens", []):
+            try:
+                q = float(it.get("quant") or 0)
+            except (TypeError, ValueError):
+                q = 0
+            try:
+                vu = float(it.get("valor_unit") or 0)
+            except (TypeError, ValueError):
+                vu = 0
+            total = q * vu
+            subtotal += total
+            linhas.append([
+                Paragraph(_num(q), cell_c),
+                Paragraph(str(it.get("descricao") or ""), cell),
+                Paragraph(_brl(vu), cell_r),
+                Paragraph(_brl(total), cell_r),
+                Paragraph(str(it.get("prazo") or ""), cell_c),
+            ])
+
+        tbl = Table(linhas, colWidths=[18 * mm, 82 * mm, 26 * mm, 26 * mm, 28 * mm], repeatRows=1)
+        tbl.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), cor),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#CCCCCC")),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F5F7FA")]),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]))
+        elems += [tbl]
 
     # ── Totais ────────────────────────────────────────────────────────────
     desconto = float(pedido.get("desconto") or 0)
