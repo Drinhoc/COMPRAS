@@ -2,3 +2,11 @@
 headless = true
 enableCORS = false
 enableXsrfProtection = false
+
+[theme]
+# Identidade Bluesun: verde (marca) + laranja (ações/CTA)
+primaryColor = "#F47920"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F3F6F2"
+textColor = "#1F2A37"
+font = "sans serif"

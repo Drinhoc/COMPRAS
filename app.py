@@ -30,27 +30,86 @@ logger = logging.getLogger("compras")
 st.markdown(
     """
     <style>
-        [data-testid="metric-container"] {
-            border: 1px solid #dee2e6;
-            border-radius: 10px;
-            padding: 10px 12px;
-            background-color: #f8f9fa;
+        :root {
+            --bs-green: #43A33B;
+            --bs-green-dark: #2E7D32;
+            --bs-orange: #F47920;
+            --bs-ink: #1F2A37;
+            --bs-line: #E3E8E3;
+        }
+        /* Títulos com a cor da marca */
+        h1, h2, h3 { color: var(--bs-ink); letter-spacing: -0.01em; }
+        h2 { border-bottom: 2px solid var(--bs-line); padding-bottom: .3rem; }
+
+        /* Cards de métrica (KPIs) */
+        [data-testid="stMetric"] {
+            background: #FFFFFF;
+            border: 1px solid var(--bs-line);
+            border-left: 4px solid var(--bs-green);
+            border-radius: 12px;
+            padding: 14px 16px;
+            box-shadow: 0 1px 2px rgba(16,24,40,.04);
         }
         [data-testid="stMetricValue"] {
-            font-size: 1.05rem !important;
-            line-height: 1.3 !important;
+            font-size: 1.35rem !important;
+            line-height: 1.25 !important;
+            font-weight: 700;
+            color: var(--bs-ink);
             word-break: break-word;
         }
         [data-testid="stMetricLabel"] {
-            font-size: 0.76rem !important;
+            font-size: 0.82rem !important;
+            color: #5b6b72;
         }
-        [data-testid="stMetricDelta"] {
-            font-size: 0.74rem !important;
+        [data-testid="stMetricLabel"] p { font-weight: 600; color: #5b6b72; }
+        [data-testid="stMetricDelta"] { font-size: 0.78rem !important; }
+
+        /* Abas principais */
+        [data-testid="stTabs"] button[data-baseweb="tab"] {
+            font-weight: 600;
+            padding: 6px 14px;
         }
+
+        /* Sidebar mais enxuta e amigável */
+        [data-testid="stSidebar"] {
+            background: linear-gradient(180deg, #F6FAF4 0%, #F1F5F0 100%);
+            border-right: 1px solid var(--bs-line);
+        }
+        [data-testid="stSidebar"] h1,
+        [data-testid="stSidebar"] h2,
+        [data-testid="stSidebar"] h3 { font-size: 0.95rem; border: none; }
+        [data-testid="stSidebar"] .stRadio label { font-size: 0.88rem; }
+
+        /* Botões: cantos suaves */
+        .stButton button, .stDownloadButton button, .stFormSubmitButton button {
+            border-radius: 8px;
+            font-weight: 600;
+        }
+        /* Botão primário com o laranja da marca já vem do theme (primaryColor) */
+
+        /* Faixa superior fininha com o degradê da marca */
+        [data-testid="stHeader"] {
+            background: transparent;
+        }
+        .block-container { padding-top: 2.2rem; }
     </style>
     """,
     unsafe_allow_html=True,
 )
+
+# Logo da marca no topo da sidebar (Bluesun)
+_LOGO = os.path.join(os.path.dirname(__file__), "assets", "logo_bluesun.png")
+if os.path.exists(_LOGO):
+    try:
+        st.logo(_LOGO, size="large")
+    except TypeError:
+        try:
+            st.logo(_LOGO)
+        except Exception:  # noqa: BLE001
+            logger.debug("st.logo indisponível", exc_info=True)
+    except Exception:  # noqa: BLE001 - st.logo pode não existir em versões antigas
+        logger.debug("st.logo indisponível", exc_info=True)
+
 
 database_url = get_database_url()
 if is_sqlite_url(database_url):
@@ -1129,7 +1188,12 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
 # Main App
 # ---------------------------------------------------------------------------
 
-st.title("Sistema de Controle de Requisições")
+st.markdown(
+    "<h1 style='margin-bottom:0'>Controle de Compras "
+    "<span style='color:#43A33B'>·</span> <span style='color:#F47920'>Bluesun</span></h1>"
+    "<p style='color:#6b7280;margin-top:2px'>Requisições, cotações, aprovações e pedidos num só lugar.</p>",
+    unsafe_allow_html=True,
+)
 
 _badge_count = crud.count_requisicoes(filters)
 
@@ -1168,18 +1232,31 @@ if "dashboard" in TABS:
 
     # --- Bloco 1: KPIs principais ---
     k1, k2, k3, k4, k5, k6 = st.columns(6)
-    k1.metric("📦 Total de Requisições", str(_total_reqs))
-    k2.metric("💰 Valor Total", format_currency(_valor_total))
-    k3.metric("💼 Em Aberto", format_currency(_em_aberto))
-    k4.metric("🎯 Ticket Médio", format_currency(_ticket))
-    k5.metric(
-        "⏱️ Tempo Médio",
-        f"{_tempo_med:.1f} dias" if _tempo_med else "—",
-    )
-    k6.metric(
-        "📉 Saving",
-        f"{_saving_pct:.2f}%" if _saving_pct else "—",
-    )
+    k1.metric("📦 Total de Requisições", str(_total_reqs),
+              help="Quantas requisições estão no filtro atual (sidebar).")
+    k2.metric("💰 Valor Total", format_currency(_valor_total),
+              help="Soma do campo Valor de todas as requisições filtradas.")
+    k3.metric("💼 Em Aberto", format_currency(_em_aberto),
+              help="Valor das requisições que ainda NÃO foram compradas/concluídas "
+                   "(Solicitado, Cotação, Aprovação).")
+    k4.metric("🎯 Ticket Médio", format_currency(_ticket),
+              help="Valor Total ÷ número de requisições. Quanto custa, em média, cada compra.")
+    k5.metric("⏱️ Tempo Médio", f"{_tempo_med:.1f} dias" if _tempo_med else "—",
+              help="Média de dias entre a Data Solicitação e a Data Compra "
+                   "(só conta requisições já compradas).")
+    k6.metric("📉 Saving", f"{_saving_pct:.2f}%" if _saving_pct else "—",
+              help="Quanto se economizou em descontos sobre o Valor Total "
+                   "(soma dos Valor Desconto ÷ Valor Total).")
+
+    with st.expander("ℹ️ Como ler estes indicadores"):
+        st.markdown(
+            "- **Total de Requisições / Valor Total** — volume e dinheiro no filtro atual.\n"
+            "- **Em Aberto** — o que ainda está em andamento (pendente de compra).\n"
+            "- **Ticket Médio** — tamanho médio de cada compra; útil pra notar compras fora do padrão.\n"
+            "- **Tempo Médio** — agilidade do processo (solicitação → compra). Quanto menor, melhor.\n"
+            "- **Saving** — eficiência na negociação (descontos obtidos). Depende de preencher o *Valor Desconto*.\n\n"
+            "💡 Os números seguem os **filtros da barra lateral** — mude o período/empresa para recortar."
+        )
 
     st.markdown("---")
 
@@ -1645,6 +1722,8 @@ if "requisicoes" in TABS:
             getRowStyle=row_style,
             singleClickEdit=True,
             stopEditingWhenCellsLoseFocus=True,
+            rowHeight=34,
+            headerHeight=38,
         )
 
         if PODE_EDITAR:
