@@ -1290,14 +1290,56 @@ if "requisicoes" in TABS:
     if PODE_EDITAR:
       with st.expander("➕ Criar Nova Requisição", expanded=False):
         payload_novo = render_requisicao_form("novo")
+
+        st.markdown("##### Itens (opcional)")
+        st.caption("Detalhe vários itens aqui. Se preencher, o Valor pode ser calculado pela soma.")
+        _df_novo_itens = pd.DataFrame(
+            columns=["descricao", "quantidade", "unidade", "valor_unitario", "observacao"]
+        )
+        _novo_itens = st.data_editor(
+            _df_novo_itens,
+            key="novo_itens_editor",
+            num_rows="dynamic",
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "descricao": st.column_config.TextColumn("Descrição", width="large"),
+                "quantidade": st.column_config.NumberColumn("Qtde", min_value=0, step=1, format="%g"),
+                "unidade": st.column_config.TextColumn("Unid.", width="small"),
+                "valor_unitario": st.column_config.NumberColumn("Valor unit. (R$)", min_value=0, format="%.2f"),
+                "observacao": st.column_config.TextColumn("Observação"),
+            },
+        )
+        _tot_novo = 0.0
+        try:
+            _tot_novo = float((
+                _novo_itens["quantidade"].fillna(0).astype(float)
+                * _novo_itens["valor_unitario"].fillna(0).astype(float)
+            ).sum())
+        except Exception:
+            logger.debug("Falha ao calcular total dos itens na criação", exc_info=True)
+        _tem_itens = not _novo_itens.dropna(how="all").empty
+        _usar_total = False
+        if _tem_itens:
+            st.metric("Total dos itens", format_currency(_tot_novo))
+            _usar_total = st.checkbox(
+                "Usar a soma dos itens como Valor da requisição",
+                value=True, key="novo_usar_total_itens",
+            )
+
         if st.button("Criar requisição", key="btn_criar_req", use_container_width=True, type="primary"):
+            if _tem_itens and _usar_total:
+                payload_novo["valor"] = _tot_novo
             errors = validate_payload(payload_novo)
             if errors:
                 for err in errors:
                     st.error(err)
             else:
-                crud.create_requisicao(payload_novo)
-                registrar_log("CRIOU", "requisicao", detalhe=payload_novo.get("item", ""))
+                _novo_id = crud.create_requisicao(payload_novo)
+                if _novo_id and _tem_itens:
+                    _rows = _novo_itens.dropna(how="all").to_dict("records")
+                    crud.replace_itens(int(_novo_id), _rows)
+                registrar_log("CRIOU", "requisicao", _novo_id, payload_novo.get("item", ""))
                 st.toast("Requisição criada com sucesso.", icon="✅")
                 st.rerun()
 

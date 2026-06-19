@@ -298,7 +298,7 @@ def _ensure_projeto_exists(conn: Any, nome: str) -> None:
     )
 
 
-def create_requisicao(data: dict[str, Any]) -> None:
+def create_requisicao(data: dict[str, Any]) -> int | None:
     all_cols = COLUMN_ORDER + ["created_at", "updated_at"]
     columns = ", ".join(all_cols)
     placeholders = ", ".join([":" + col for col in all_cols])
@@ -306,10 +306,12 @@ def create_requisicao(data: dict[str, Any]) -> None:
     params["created_at"] = params["updated_at"] = _now()
     with ENGINE.begin() as conn:
         _ensure_projeto_exists(conn, data.get("projeto") or "")
-        conn.execute(
-            text(f"INSERT INTO requisicoes ({columns}) VALUES ({placeholders})"),
+        result = conn.execute(
+            text(f"INSERT INTO requisicoes ({columns}) VALUES ({placeholders}) RETURNING id"),
             params,
         )
+        row = result.fetchone()
+        return int(row[0]) if row else None
 
 
 def delete_requisicao(requisicao_id: int) -> None:
