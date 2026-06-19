@@ -1423,7 +1423,7 @@ if "requisicoes" in TABS:
         _counts = crud.fetch_counts(_ids)
 
         # Colunas fixas e essenciais; detalhes ficam no modal.
-        _GRID_COLS = ["req", "data_solicitacao", "data_compra", "empresa",
+        _GRID_COLS = ["req", "requisicao", "data_solicitacao", "data_compra", "empresa",
                       "item", "fornecedor", "valor", "situacao", "col_orc", "col_anx"]
         df_grid = df_view.copy()
         df_grid["req"] = df_grid["id"].apply(lambda i: f"REQ-{int(i):04d}")
@@ -1447,16 +1447,22 @@ if "requisicoes" in TABS:
                             editable=False, width=120, pinned="left", suppressSizeToFit=True,
                             cellRenderer=req_renderer, filter=False)
         gb.configure_column("id",               hide=True)
+        gb.configure_column("requisicao",       headerName="Cód. Original",
+                            width=130, suppressSizeToFit=True, editable=PODE_EDITAR)
         gb.configure_column("item",             headerName="Item",      width=260,
                             editable=PODE_EDITAR)
         if "data_solicitacao" in df_grid.columns:
             gb.configure_column("data_solicitacao", headerName="Dt. Solicitação",
                                 width=130, suppressSizeToFit=True,
-                                valueFormatter=date_formatter)
+                                valueFormatter=date_formatter,
+                                editable=PODE_EDITAR,
+                                cellEditor="agDateStringCellEditor")
         if "data_compra" in df_grid.columns:
             gb.configure_column("data_compra",      headerName="Dt. Compra",
                                 width=120, suppressSizeToFit=True,
-                                valueFormatter=date_formatter)
+                                valueFormatter=date_formatter,
+                                editable=PODE_EDITAR,
+                                cellEditor="agDateStringCellEditor")
         if "empresa" in df_grid.columns:
             gb.configure_column("empresa",          headerName="Empresa",   width=150,
                                 editable=PODE_EDITAR)
@@ -1520,7 +1526,8 @@ if "requisicoes" in TABS:
         # ── Detectar edição inline (Status, Fornecedor, Valor) ────────────
         df_returned = grid_result.get("data")
         if PODE_EDITAR and df_returned is not None and not df_returned.empty and "id" in df_returned.columns:
-            _editaveis = ["situacao", "fornecedor", "valor", "empresa", "item"]
+            _editaveis = ["situacao", "fornecedor", "valor", "empresa", "item",
+                          "requisicao", "data_solicitacao", "data_compra"]
             for _, ret_row in df_returned.iterrows():
                 _rid = ret_row.get("id")
                 if _rid is None:
@@ -1545,6 +1552,19 @@ if "requisicoes" in TABS:
                         _nv = str(_new or "").strip()
                         if _nv and _nv != str(_old or "").strip():
                             _updates[_col] = _nv.upper() if _col == "empresa" else _nv
+                    elif _col == "data_solicitacao":
+                        # Obrigatória: só atualiza se vier valor e for diferente
+                        _nv = str(_new or "").strip()[:10]
+                        if _nv and _nv != str(_old or "").strip()[:10]:
+                            _updates["data_solicitacao"] = _nv
+                    elif _col == "data_compra":
+                        # Opcional: aceita limpar (vira nulo)
+                        _nv = str(_new or "").strip()[:10]
+                        if _nv != str(_old or "").strip()[:10]:
+                            _updates["data_compra"] = _nv or None
+                    elif _col == "requisicao":
+                        if (str(_new or "").strip()) != (str(_old or "").strip()):
+                            _updates["requisicao"] = str(_new or "").strip()
                     else:  # fornecedor
                         if (str(_new or "").strip()) != (str(_old or "").strip()):
                             _updates["fornecedor"] = str(_new or "").strip()
