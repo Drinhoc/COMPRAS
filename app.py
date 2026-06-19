@@ -218,18 +218,19 @@ def render_filters() -> dict:
     st.sidebar.header("Filtros")
 
     # ── Contadores por preset ─────────────────────────────────────────────
+    _abertos = ["Solicitado", "Cotação", "Aprovação"]
     _ct = crud.count_requisicoes({})
-    _cp = crud.count_requisicoes({"situacao": ["Solicitado"]})
+    _cp = crud.count_requisicoes({"situacao": _abertos})
     _cc = crud.count_requisicoes({"situacao": ["Comprado"]})
     _cn = crud.count_requisicoes({"situacao": ["Concluído"]})
 
     _preset_labels = [
         f"Todos ({_ct})",
-        f"Pendentes ({_cp})",
+        f"Em aberto ({_cp})",
         f"Comprados ({_cc})",
         f"Concluídos ({_cn})",
     ]
-    _preset_situacoes = [[], ["Solicitado"], ["Comprado"], ["Concluído"]]
+    _preset_situacoes = [[], _abertos, ["Comprado"], ["Concluído"]]
 
     preset_label = st.sidebar.radio(
         "Visualização rápida",
@@ -1432,7 +1433,7 @@ if "requisicoes" in TABS:
         _counts = crud.fetch_counts(_ids)
 
         # Exibe apenas as colunas essenciais; o resto fica no modal
-        _GRID_COLS = ["req", "data_solicitacao", "empresa",
+        _GRID_COLS = ["req", "data_solicitacao", "data_compra", "empresa",
                       "item", "fornecedor", "valor", "situacao", "col_orc", "col_anx"]
         df_grid = df_view.copy()
         df_grid["req"] = df_grid["id"].apply(lambda i: f"REQ-{int(i):04d}")
@@ -1458,6 +1459,9 @@ if "requisicoes" in TABS:
         gb.configure_column("id",               hide=True)
         gb.configure_column("data_solicitacao", headerName="Dt. Solicitação",
                             width=130, suppressSizeToFit=True,
+                            valueFormatter=date_formatter)
+        gb.configure_column("data_compra",      headerName="Dt. Compra",
+                            width=120, suppressSizeToFit=True,
                             valueFormatter=date_formatter)
         gb.configure_column("empresa",          headerName="Empresa",   width=150,
                             editable=PODE_EDITAR)
