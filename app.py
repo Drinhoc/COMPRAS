@@ -126,6 +126,14 @@ def parse_date_input(value: str | None) -> date | None:
     return pd.to_datetime(value).date()
 
 
+def fmt_date(value: object | None) -> str:
+    """Formata uma data (string ISO, date ou datetime) em DD/MM/AAAA. Vazio vira '—'."""
+    if value in (None, ""):
+        return "—"
+    parsed = pd.to_datetime(value, errors="coerce")
+    return "—" if pd.isna(parsed) else parsed.strftime("%d/%m/%Y")
+
+
 def to_int(value: object | None) -> int:
     try:
         return int(value) if value is not None else 0
@@ -630,7 +638,7 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
                 _icon = _status_icon.get((o.get("status_orcamento") or "").upper(), "•")
                 cab.markdown(f"{_icon} **#{_oid}** · {o.get('fornecedor') or '—'}")
                 cval.markdown(format_currency(o.get("valor")))
-                cprz.markdown(o.get("prazo_entrega") or "—")
+                cprz.markdown(fmt_date(o.get("prazo_entrega")))
                 cst.caption(o.get("status_orcamento") or "RECEBIDO")
                 if PODE_APROVAR and cok.button("✅", key=f"ok_orc_{selected_req_id}_{_oid}", help="Aprovar este orçamento"):
                     crud.update_orcamento(_oid, {"status_orcamento": "APROVADO"})
@@ -770,8 +778,13 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
                 df_ap["orçamento"] = df_ap["orcamento_id"].apply(
                     lambda x: orc_label.get(int(x), f"Orç. #{int(x)}") if pd.notna(x) else "— (geral)"
                 )
+            if "created_at" in df_ap.columns:
+                df_ap["created_at"] = pd.to_datetime(df_ap["created_at"], errors="coerce").dt.strftime("%d/%m/%Y %H:%M").fillna("")
             cols_show = [c for c in ["created_at", "orçamento", "acao", "comentario", "aprovador"] if c in df_ap.columns]
-            st.dataframe(df_ap[cols_show], use_container_width=True, hide_index=True)
+            st.dataframe(
+                df_ap[cols_show], use_container_width=True, hide_index=True,
+                column_config={"created_at": st.column_config.TextColumn("Data/Hora")},
+            )
         else:
             st.info("Nenhuma ação de aprovação registrada.")
 
@@ -875,8 +888,13 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
                 df_anx["orçamento"] = df_anx["orcamento_id"].apply(
                     lambda x: orc_anx_label.get(int(x), f"Orç. #{int(x)}") if pd.notna(x) else "—"
                 )
+            if "uploaded_at" in df_anx.columns:
+                df_anx["uploaded_at"] = pd.to_datetime(df_anx["uploaded_at"], errors="coerce").dt.strftime("%d/%m/%Y %H:%M").fillna("")
             cols_anx = [c for c in ["id", "tipo", "nome_arquivo", "orçamento", "uploaded_at"] if c in df_anx.columns]
-            st.dataframe(df_anx[cols_anx], use_container_width=True, hide_index=True)
+            st.dataframe(
+                df_anx[cols_anx], use_container_width=True, hide_index=True,
+                column_config={"uploaded_at": st.column_config.TextColumn("Enviado em")},
+            )
         else:
             st.info("Nenhum anexo enviado.")
 
@@ -1960,6 +1978,8 @@ if "projetos" in TABS:
                 _df_orcs_show = _df_orcs[_orc_cols].copy()
                 if "valor" in _df_orcs_show.columns:
                     _df_orcs_show["valor"] = _df_orcs_show["valor"].apply(format_currency)
+                if "prazo_entrega" in _df_orcs_show.columns:
+                    _df_orcs_show["prazo_entrega"] = _df_orcs_show["prazo_entrega"].apply(fmt_date)
                 st.dataframe(_df_orcs_show, use_container_width=True, hide_index=True)
 
 
@@ -2046,7 +2066,11 @@ if "admin" in TABS:
     if _usuarios:
         _dfu = pd.DataFrame(_usuarios)[["id", "nome", "login", "papel", "ativo", "created_at"]]
         _dfu["ativo"] = _dfu["ativo"].apply(lambda v: "Sim" if v else "Não")
-        st.dataframe(_dfu, use_container_width=True, hide_index=True)
+        _dfu["created_at"] = pd.to_datetime(_dfu["created_at"], errors="coerce").dt.strftime("%d/%m/%Y %H:%M").fillna("")
+        st.dataframe(
+            _dfu, use_container_width=True, hide_index=True,
+            column_config={"created_at": st.column_config.TextColumn("Criado em")},
+        )
 
     with st.expander("➕ Criar usuário", expanded=False):
         _n = st.text_input("Nome", key="adm_novo_nome")
