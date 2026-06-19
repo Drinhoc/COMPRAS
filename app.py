@@ -1296,75 +1296,27 @@ if "requisicoes" in TABS:
                 st.toast("Requisição criada com sucesso.", icon="✅")
                 st.rerun()
 
-    _ca, _cb = st.columns([4, 1])
-    with _ca:
-        status_sel = st.multiselect(
-            "Status visíveis na lista",
-            STATUS_LIST,
-            default=STATUS_LIST,
-            key="list_status_sel",
-            help="Controla quais situações aparecem na tabela. Ao mudar uma requisição "
-                 "para um status fora desta seleção, ela deixa de aparecer aqui (mas não é perdida).",
-        )
-    with _cb:
-        st.caption("")
-        if st.button("🔃 Atualizar", use_container_width=True):
-            st.rerun()
-
-    # Seletor de colunas (modo flexível: mostra só o que interessa)
-    _col_opts = {
-        "Dt. Solicitação": "data_solicitacao",
-        "Dt. Compra": "data_compra",
-        "Empresa": "empresa",
-        "Fornecedor": "fornecedor",
-        "Valor": "valor",
-        "Orç.": "col_orc",
-        "Anexos": "col_anx",
-    }
-    with st.expander("⚙️ Colunas exibidas"):
-        cols_sel = st.multiselect(
-            "Escolha as colunas (Requisição, Item e Status são sempre exibidos)",
-            list(_col_opts.keys()),
-            default=list(_col_opts.keys()),
-            key="list_cols_sel",
-        )
-    _visible_cols = {_col_opts[c] for c in cols_sel}
-
     req_filters = dict(filters)
-    # O multiselect de status do topo manda na visibilidade da lista,
-    # respeitando (interseção) qualquer filtro de status vindo da sidebar.
-    if status_sel:
-        _sb_sit = req_filters.get("situacao")
-        if _sb_sit:
-            req_filters["situacao"] = [s for s in status_sel if s in _sb_sit]
-        elif len(status_sel) < len(STATUS_LIST):
-            req_filters["situacao"] = status_sel
-
     total_registros = crud.count_requisicoes(req_filters)
 
-    # Ordenação (server-side, vale para todas as páginas)
-    _ord_opcoes = {
-        "Data Solicitação": "data_solicitacao",
-        "Requisição (ID)": "id",
-        "Empresa": "empresa",
-        "Item": "item",
-        "Fornecedor": "fornecedor",
-        "Valor": "valor",
-        "Status": "situacao",
-    }
-    oc1, oc2, oc3 = st.columns([2, 1, 1])
-    _ord_label = oc1.selectbox("Ordenar por", list(_ord_opcoes.keys()), index=0)
-    _ord_dir = oc2.radio("Sentido", ["Decrescente", "Crescente"], horizontal=True)
-    page_size = oc3.selectbox("Registros por página", [10, 20, 50], index=1)
+    # Controles enxutos: contador + atualizar. Ordenação fixa (mais recentes primeiro).
+    _info, _btn = st.columns([4, 1])
+    _info.caption(f"{total_registros} requisição(ões) · use a sidebar para filtrar")
+    if _btn.button("🔃 Atualizar", use_container_width=True):
+        st.rerun()
 
+    page_size = 20
     total_paginas = max(1, (total_registros + page_size - 1) // page_size)
-    pagina = st.number_input("Página", min_value=1, max_value=total_paginas, value=1)
+    pagina = (
+        st.number_input("Página", min_value=1, max_value=total_paginas, value=1)
+        if total_paginas > 1 else 1
+    )
     offset = (pagina - 1) * page_size
 
     registros = crud.fetch_requisicoes(
         req_filters, limit=page_size, offset=offset,
-        order_by=_ord_opcoes[_ord_label],
-        descending=(_ord_dir == "Decrescente"),
+        order_by="data_solicitacao",
+        descending=True,
     )
     df_view = pd.DataFrame(registros)
 
@@ -1465,13 +1417,9 @@ if "requisicoes" in TABS:
         _ids = [int(i) for i in df_view["id"].tolist()]
         _counts = crud.fetch_counts(_ids)
 
-        # Colunas: 'req', 'item' e 'situacao' sempre; demais conforme seleção do usuário.
-        _ALL_GRID_COLS = ["req", "data_solicitacao", "data_compra", "empresa",
-                          "item", "fornecedor", "valor", "situacao", "col_orc", "col_anx"]
-        _GRID_COLS = [
-            c for c in _ALL_GRID_COLS
-            if c in ("req", "item", "situacao") or c in _visible_cols
-        ]
+        # Colunas fixas e essenciais; detalhes ficam no modal.
+        _GRID_COLS = ["req", "data_solicitacao", "data_compra", "empresa",
+                      "item", "fornecedor", "valor", "situacao", "col_orc", "col_anx"]
         df_grid = df_view.copy()
         df_grid["req"] = df_grid["id"].apply(lambda i: f"REQ-{int(i):04d}")
         df_grid["col_orc"] = df_grid["id"].apply(
@@ -1599,13 +1547,6 @@ if "requisicoes" in TABS:
                     crud.update_requisicao(int(_rid), _updates)
                     registrar_log("EDITOU_INLINE", "requisicao", int(_rid), ", ".join(_updates.keys()))
                     st.toast(f"REQ-{int(_rid):04d} atualizada.", icon="✅")
-                    _novo_status = _updates.get("situacao")
-                    if _novo_status and _novo_status not in status_sel:
-                        st.toast(
-                            f"'{_novo_status}' está fora do filtro de status atual — "
-                            "a requisição continua salva, mas saiu desta visualização.",
-                            icon="ℹ️",
-                        )
                     st.session_state.pop("_last_dialog_req_id", None)
                     st.rerun()
 
