@@ -1296,16 +1296,49 @@ if "requisicoes" in TABS:
                 st.toast("Requisição criada com sucesso.", icon="✅")
                 st.rerun()
 
-    col_actions1, col_actions2 = st.columns([1, 1])
-    with col_actions1:
-        if st.button("🔃 Atualizar tabela", use_container_width=True):
+    _ca, _cb = st.columns([4, 1])
+    with _ca:
+        status_sel = st.multiselect(
+            "Status visíveis na lista",
+            STATUS_LIST,
+            default=STATUS_LIST,
+            key="list_status_sel",
+            help="Controla quais situações aparecem na tabela. Ao mudar uma requisição "
+                 "para um status fora desta seleção, ela deixa de aparecer aqui (mas não é perdida).",
+        )
+    with _cb:
+        st.caption("")
+        if st.button("🔃 Atualizar", use_container_width=True):
             st.rerun()
-    with col_actions2:
-        ocultar_concluidos = st.checkbox("Ocultar Concluídos e Cancelados", value=False)
+
+    # Seletor de colunas (modo flexível: mostra só o que interessa)
+    _col_opts = {
+        "Dt. Solicitação": "data_solicitacao",
+        "Dt. Compra": "data_compra",
+        "Empresa": "empresa",
+        "Fornecedor": "fornecedor",
+        "Valor": "valor",
+        "Orç.": "col_orc",
+        "Anexos": "col_anx",
+    }
+    with st.expander("⚙️ Colunas exibidas"):
+        cols_sel = st.multiselect(
+            "Escolha as colunas (Requisição, Item e Status são sempre exibidos)",
+            list(_col_opts.keys()),
+            default=list(_col_opts.keys()),
+            key="list_cols_sel",
+        )
+    _visible_cols = {_col_opts[c] for c in cols_sel}
 
     req_filters = dict(filters)
-    if ocultar_concluidos:
-        req_filters["situacao"] = ["Solicitado", "Cotação", "Aprovação", "Comprado"]
+    # O multiselect de status do topo manda na visibilidade da lista,
+    # respeitando (interseção) qualquer filtro de status vindo da sidebar.
+    if status_sel:
+        _sb_sit = req_filters.get("situacao")
+        if _sb_sit:
+            req_filters["situacao"] = [s for s in status_sel if s in _sb_sit]
+        elif len(status_sel) < len(STATUS_LIST):
+            req_filters["situacao"] = status_sel
 
     total_registros = crud.count_requisicoes(req_filters)
 
@@ -1432,9 +1465,13 @@ if "requisicoes" in TABS:
         _ids = [int(i) for i in df_view["id"].tolist()]
         _counts = crud.fetch_counts(_ids)
 
-        # Exibe apenas as colunas essenciais; o resto fica no modal
-        _GRID_COLS = ["req", "data_solicitacao", "data_compra", "empresa",
-                      "item", "fornecedor", "valor", "situacao", "col_orc", "col_anx"]
+        # Colunas: 'req', 'item' e 'situacao' sempre; demais conforme seleção do usuário.
+        _ALL_GRID_COLS = ["req", "data_solicitacao", "data_compra", "empresa",
+                          "item", "fornecedor", "valor", "situacao", "col_orc", "col_anx"]
+        _GRID_COLS = [
+            c for c in _ALL_GRID_COLS
+            if c in ("req", "item", "situacao") or c in _visible_cols
+        ]
         df_grid = df_view.copy()
         df_grid["req"] = df_grid["id"].apply(lambda i: f"REQ-{int(i):04d}")
         df_grid["col_orc"] = df_grid["id"].apply(
@@ -1457,29 +1494,36 @@ if "requisicoes" in TABS:
                             editable=False, width=120, pinned="left", suppressSizeToFit=True,
                             cellRenderer=req_renderer, filter=False)
         gb.configure_column("id",               hide=True)
-        gb.configure_column("data_solicitacao", headerName="Dt. Solicitação",
-                            width=130, suppressSizeToFit=True,
-                            valueFormatter=date_formatter)
-        gb.configure_column("data_compra",      headerName="Dt. Compra",
-                            width=120, suppressSizeToFit=True,
-                            valueFormatter=date_formatter)
-        gb.configure_column("empresa",          headerName="Empresa",   width=150,
-                            editable=PODE_EDITAR)
         gb.configure_column("item",             headerName="Item",      width=260,
                             editable=PODE_EDITAR)
-        gb.configure_column("fornecedor",       headerName="Fornecedor", width=160,
-                            editable=PODE_EDITAR)
-        gb.configure_column("valor",            headerName="Valor (R$)",
-                            type=["numericColumn"], width=120,
-                            valueFormatter=currency_formatter,
-                            editable=PODE_EDITAR,
-                            cellEditor="agNumberCellEditor")
-        gb.configure_column("col_orc",          headerName="Orç.",
-                            editable=False, width=80, suppressSizeToFit=True,
-                            filter=False, sortable=False, cellRenderer=orc_renderer)
-        gb.configure_column("col_anx",          headerName="Anexos",
-                            editable=False, width=90, suppressSizeToFit=True,
-                            filter=False, sortable=False, cellRenderer=anx_renderer)
+        if "data_solicitacao" in df_grid.columns:
+            gb.configure_column("data_solicitacao", headerName="Dt. Solicitação",
+                                width=130, suppressSizeToFit=True,
+                                valueFormatter=date_formatter)
+        if "data_compra" in df_grid.columns:
+            gb.configure_column("data_compra",      headerName="Dt. Compra",
+                                width=120, suppressSizeToFit=True,
+                                valueFormatter=date_formatter)
+        if "empresa" in df_grid.columns:
+            gb.configure_column("empresa",          headerName="Empresa",   width=150,
+                                editable=PODE_EDITAR)
+        if "fornecedor" in df_grid.columns:
+            gb.configure_column("fornecedor",       headerName="Fornecedor", width=160,
+                                editable=PODE_EDITAR)
+        if "valor" in df_grid.columns:
+            gb.configure_column("valor",            headerName="Valor (R$)",
+                                type=["numericColumn"], width=120,
+                                valueFormatter=currency_formatter,
+                                editable=PODE_EDITAR,
+                                cellEditor="agNumberCellEditor")
+        if "col_orc" in df_grid.columns:
+            gb.configure_column("col_orc",          headerName="Orç.",
+                                editable=False, width=80, suppressSizeToFit=True,
+                                filter=False, sortable=False, cellRenderer=orc_renderer)
+        if "col_anx" in df_grid.columns:
+            gb.configure_column("col_anx",          headerName="Anexos",
+                                editable=False, width=90, suppressSizeToFit=True,
+                                filter=False, sortable=False, cellRenderer=anx_renderer)
         gb.configure_column("_want_tab",        hide=True)
         gb.configure_column(
             "situacao",
@@ -1555,6 +1599,13 @@ if "requisicoes" in TABS:
                     crud.update_requisicao(int(_rid), _updates)
                     registrar_log("EDITOU_INLINE", "requisicao", int(_rid), ", ".join(_updates.keys()))
                     st.toast(f"REQ-{int(_rid):04d} atualizada.", icon="✅")
+                    _novo_status = _updates.get("situacao")
+                    if _novo_status and _novo_status not in status_sel:
+                        st.toast(
+                            f"'{_novo_status}' está fora do filtro de status atual — "
+                            "a requisição continua salva, mas saiu desta visualização.",
+                            icon="ℹ️",
+                        )
                     st.session_state.pop("_last_dialog_req_id", None)
                     st.rerun()
 
