@@ -296,8 +296,10 @@ def render_filters() -> dict:
             "Período Data Solicitação",
             value=st.session_state.get("f_data_solicitacao", ()),
             key="f_data_solicitacao",
+            format="DD/MM/YYYY",
         )
-        data_compra = st.date_input("Período Data Compra", value=(), key="f_data_compra")
+        data_compra = st.date_input("Período Data Compra", value=(), key="f_data_compra",
+                                    format="DD/MM/YYYY")
 
     situacoes_aplicadas = situacao or preset_situacoes
 
@@ -439,6 +441,7 @@ def render_requisicao_form(prefix: str, data: dict | None = None) -> dict:
             "Data Solicitação*",
             value=parse_date_input(data.get("data_solicitacao")) or date.today(),
             key=f"{prefix}_data_solicitacao",
+            format="DD/MM/YYYY",
         )
         sem_data_compra = st.checkbox(
             "Sem Data Compra",
@@ -450,6 +453,7 @@ def render_requisicao_form(prefix: str, data: dict | None = None) -> dict:
             value=(parse_date_input(data.get("data_compra")) or date.today()),
             key=f"{prefix}_data_compra",
             disabled=sem_data_compra,
+            format="DD/MM/YYYY",
         )
         fornecedor = st.text_input("Fornecedor", value=data.get("fornecedor", ""), key=f"{prefix}_fornecedor")
 
@@ -674,7 +678,7 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
             oc1, oc2 = st.columns(2)
             fornecedor_orc = oc1.text_input("Fornecedor")
             valor_orc = oc1.text_input("Valor")
-            prazo_orc = oc2.date_input("Prazo Entrega", value=None)
+            prazo_orc = oc2.date_input("Prazo Entrega", value=None, format="DD/MM/YYYY")
             cond_orc = oc2.text_input("Condições de Pagamento")
             status_orc = st.selectbox("Status orçamento", ["RECEBIDO", "APROVADO", "REJEITADO"])
             obs_orc = st.text_area("Observação orçamento")
@@ -717,7 +721,7 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
                             _prazo_val = date.fromisoformat(str(_o.get("prazo_entrega"))) if _o.get("prazo_entrega") else None
                         except (TypeError, ValueError):
                             _prazo_val = None
-                        e_prazo = ec2.date_input("Prazo Entrega", value=_prazo_val)
+                        e_prazo = ec2.date_input("Prazo Entrega", value=_prazo_val, format="DD/MM/YYYY")
                         e_cond = ec2.text_input("Condições de Pagamento", value=_o.get("condicoes_pagamento") or "")
                         _st_opts = ["RECEBIDO", "APROVADO", "APROVADO PARCIAL", "REJEITADO"]
                         _cur = (_o.get("status_orcamento") or "RECEBIDO").upper()
@@ -979,7 +983,8 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
         pc1, pc2 = st.columns(2)
         ped_numero = pc1.text_input("Número do pedido", value=f"REQ-{selected_req_id:04d}",
                                     key=f"ped_num_{selected_req_id}")
-        ped_data = pc2.date_input("Data", value=date.today(), key=f"ped_data_{selected_req_id}")
+        ped_data = pc2.date_input("Data", value=date.today(), key=f"ped_data_{selected_req_id}",
+                                  format="DD/MM/YYYY")
 
         st.markdown("**Destinatário (fornecedor)**")
         dc1, dc2 = st.columns(2)
