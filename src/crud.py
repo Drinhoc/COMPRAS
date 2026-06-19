@@ -389,7 +389,17 @@ def get_anexo_conteudo(anexo_id: int) -> dict[str, Any] | None:
     query = "SELECT id, nome_arquivo, mime_type, conteudo FROM anexos WHERE id = :id"
     with ENGINE.connect() as conn:
         row = conn.execute(text(query), {"id": anexo_id}).fetchone()
-        return dict(row._mapping) if row else None
+        if not row:
+            return None
+        dados = dict(row._mapping)
+        # Postgres (bytea) devolve memoryview; normaliza para bytes para o Streamlit.
+        _c = dados.get("conteudo")
+        if _c is not None and not isinstance(_c, bytes):
+            try:
+                dados["conteudo"] = bytes(_c)
+            except (TypeError, ValueError):
+                dados["conteudo"] = _c
+        return dados
 
 
 def delete_anexo(anexo_id: int) -> None:
