@@ -1228,10 +1228,9 @@ if "dashboard" in TABS:
     _em_aberto = metrics.valor_em_aberto(df_metrics)
     _ticket = metrics.ticket_medio(df_metrics)
     _tempo_med = metrics.tempo_medio_atendimento(df_metrics)
-    _saving_pct = (_desconto_total / _valor_total * 100) if _valor_total else 0.0
 
     # --- Bloco 1: KPIs principais ---
-    k1, k2, k3, k4, k5, k6 = st.columns(6)
+    k1, k2, k3, k4, k5 = st.columns(5)
     k1.metric("📦 Total de Requisições", str(_total_reqs),
               help="Quantas requisições estão no filtro atual (sidebar).")
     k2.metric("💰 Valor Total", format_currency(_valor_total),
@@ -1244,17 +1243,13 @@ if "dashboard" in TABS:
     k5.metric("⏱️ Tempo Médio", f"{_tempo_med:.1f} dias" if _tempo_med else "—",
               help="Média de dias entre a Data Solicitação e a Data Compra "
                    "(só conta requisições já compradas).")
-    k6.metric("📉 Saving", f"{_saving_pct:.2f}%" if _saving_pct else "—",
-              help="Quanto se economizou em descontos sobre o Valor Total "
-                   "(soma dos Valor Desconto ÷ Valor Total).")
 
     with st.expander("ℹ️ Como ler estes indicadores"):
         st.markdown(
             "- **Total de Requisições / Valor Total** — volume e dinheiro no filtro atual.\n"
             "- **Em Aberto** — o que ainda está em andamento (pendente de compra).\n"
             "- **Ticket Médio** — tamanho médio de cada compra; útil pra notar compras fora do padrão.\n"
-            "- **Tempo Médio** — agilidade do processo (solicitação → compra). Quanto menor, melhor.\n"
-            "- **Saving** — eficiência na negociação (descontos obtidos). Depende de preencher o *Valor Desconto*.\n\n"
+            "- **Tempo Médio** — agilidade do processo (solicitação → compra). Quanto menor, melhor.\n\n"
             "💡 Os números seguem os **filtros da barra lateral** — mude o período/empresa para recortar."
         )
 
