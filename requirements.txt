@@ -8,3 +8,4 @@ psycopg2-binary==2.9.9
 streamlit-aggrid==1.0.5
 plotly>=5.18.0
 reportlab>=4.0.0
+PyMuPDF>=1.24.0

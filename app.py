@@ -12,7 +12,7 @@ import streamlit as st
 from st_aggrid import AgGrid, GridOptionsBuilder, JsCode
 from st_aggrid.shared import GridUpdateMode
 
-from src import auth, crud, excel_io, metrics, pedido
+from src import auth, cotacao_pdf, crud, excel_io, metrics, pedido
 from src.constants import COLUMN_ORDER, DISPLAY_NAMES, STATUS_LIST
 from src.db import get_database_url, init_db, insert_many, is_sqlite_url
 
@@ -1342,6 +1342,82 @@ if "requisicoes" in TABS:
                 registrar_log("CRIOU", "requisicao", _novo_id, payload_novo.get("item", ""))
                 st.toast("Requisição criada com sucesso.", icon="✅")
                 st.rerun()
+
+      with st.expander("📄 Importar Carta de Cotação (PDF)", expanded=False):
+        st.caption("Envie um ou mais PDFs de Carta de Cotação. Cada PDF vira uma requisição com seus itens.")
+        _pdfs = st.file_uploader(
+            "Arquivos PDF", type=["pdf"], accept_multiple_files=True, key="cotacao_pdf_uploader",
+        )
+        if _pdfs:
+            _parsed: list[dict] = []
+            for _f in _pdfs:
+                try:
+                    _d = cotacao_pdf.parse_carta_cotacao(_f.getvalue())
+                    _d["_arquivo"] = _f.name
+                    _parsed.append(_d)
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception("Erro ao ler PDF de cotação: %s", _f.name)
+                    st.error(f"❌ {_f.name}: não consegui ler ({exc}).")
+
+            for _d in _parsed:
+                _titulo = f"📄 {_d['_arquivo']} → Carta {_d.get('requisicao') or '?'}"
+                st.markdown(f"**{_titulo}**")
+                _c1, _c2, _c3, _c4 = st.columns(4)
+                _c1.caption(f"Empresa: **{_d.get('empresa') or '—'}**")
+                _c2.caption(f"Data: **{fmt_date(_d.get('data_solicitacao'))}**")
+                _c3.caption(f"Projeto: **{_d.get('projeto') or '—'}**")
+                _c4.caption(f"Itens: **{len(_d.get('itens') or [])}**")
+                if _d.get("itens"):
+                    st.dataframe(
+                        pd.DataFrame(_d["itens"])[["codigo", "descricao", "quantidade", "unidade"]],
+                        use_container_width=True, hide_index=True,
+                    )
+                for _e in _d.get("erros") or []:
+                    st.warning(_e)
+
+            if _parsed and st.button("✅ Importar requisições", key="btn_import_cotacao",
+                                     use_container_width=True, type="primary"):
+                _ok, _falhas = 0, 0
+                for _d in _parsed:
+                    _payload = {
+                        "requisicao": _d.get("requisicao"),
+                        "empresa": (_d.get("empresa") or "").upper(),
+                        "item": _d.get("item"),
+                        "data_solicitacao": _d.get("data_solicitacao"),
+                        "projeto": (_d.get("projeto") or "").upper(),
+                        "entrega": _d.get("entrega"),
+                        "situacao": "Solicitado",
+                        "valor": None,
+                    }
+                    _errs = validate_payload(_payload)
+                    if _errs:
+                        _falhas += 1
+                        st.error(f"❌ {_d['_arquivo']}: {' / '.join(_errs)}")
+                        continue
+
+                    def _criar(_p=_payload, _itens=_d.get("itens") or []):
+                        _nid = crud.create_requisicao(_p)
+                        if _nid and _itens:
+                            _rows = [{
+                                "descricao": it.get("descricao"),
+                                "quantidade": it.get("quantidade"),
+                                "unidade": it.get("unidade"),
+                                "valor_unitario": it.get("valor_unitario"),
+                                "observacao": (f"Cód: {it.get('codigo')}" if it.get("codigo") else ""),
+                            } for it in _itens]
+                            crud.replace_itens(int(_nid), _rows)
+                        return _nid
+
+                    if run_safe(_criar):
+                        _ok += 1
+                        registrar_log("IMPORTOU_COTACAO", "requisicao",
+                                      detalhe=f"Carta {_d.get('requisicao')} · {len(_d.get('itens') or [])} itens")
+                    else:
+                        _falhas += 1
+                if _ok:
+                    st.success(f"{_ok} requisição(ões) importada(s)."
+                               + (f" {_falhas} com erro." if _falhas else ""))
+                    st.rerun()
 
     req_filters = dict(filters)
     total_registros = crud.count_requisicoes(req_filters)
