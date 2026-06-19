@@ -149,13 +149,13 @@ def to_str(value: object | None) -> str:
 
 def validate_payload(payload: dict) -> list[str]:
     errors: list[str] = []
-    if not payload["empresa"]:
+    if not payload.get("empresa"):
         errors.append("Empresa é obrigatória.")
-    if not payload["item"]:
+    if not payload.get("item"):
         errors.append("Item é obrigatório.")
-    if not payload["data_solicitacao"]:
+    if not payload.get("data_solicitacao"):
         errors.append("Data Solicitação é obrigatória.")
-    if payload["qtde"] is not None and payload["qtde"] < 0:
+    if payload.get("qtde") is not None and payload["qtde"] < 0:
         errors.append("Qtde deve ser >= 0.")
     # Valores não podem ser negativos
     for campo, rotulo in (("valor", "Valor"), ("valor_desconto", "Valor Desconto")):
