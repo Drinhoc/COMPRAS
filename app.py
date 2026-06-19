@@ -1364,8 +1364,8 @@ if "requisicoes" in TABS:
                 st.markdown(f"**{_titulo}**")
                 _c1, _c2, _c3, _c4 = st.columns(4)
                 _c1.caption(f"Empresa: **{_d.get('empresa') or '—'}**")
-                _c2.caption(f"Data: **{fmt_date(_d.get('data_solicitacao'))}**")
-                _c3.caption(f"Projeto: **{_d.get('projeto') or '—'}**")
+                _c2.caption(f"Dt. Solicitação: **{fmt_date(_d.get('data_solicitacao'))}**")
+                _c3.caption(f"Sug. Entrega: **{_d.get('entrega') or '—'}**")
                 _c4.caption(f"Itens: **{len(_d.get('itens') or [])}**")
                 if _d.get("itens"):
                     st.dataframe(
@@ -1384,7 +1384,6 @@ if "requisicoes" in TABS:
                         "empresa": (_d.get("empresa") or "").upper(),
                         "item": _d.get("item"),
                         "data_solicitacao": _d.get("data_solicitacao"),
-                        "projeto": (_d.get("projeto") or "").upper(),
                         "entrega": _d.get("entrega"),
                         "situacao": "Solicitado",
                         "valor": None,
