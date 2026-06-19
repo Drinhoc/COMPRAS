@@ -640,7 +640,7 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
                         "aprovador": USER["nome"],
                     })
                     if req_data:
-                        _upd = dict(req_data); _upd["situacao"] = "Comprado"
+                        _upd = dict(req_data); _upd["situacao"] = "Aprovação"
                         crud.update_requisicao(selected_req_id, _upd)
                     registrar_log("APROVOU", "orcamento", _oid, f"REQ {selected_req_id}")
                     st.toast(f"Orçamento #{_oid} aprovado.", icon="✅")
@@ -684,6 +684,54 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
                 registrar_log("ADICIONOU_ORCAMENTO", "requisicao", selected_req_id)
                 st.toast("Orçamento adicionado.", icon="✅")
                 st.rerun()
+
+          if orcs:
+            with st.expander("✏️ Editar Orçamento"):
+                _edit_id = st.selectbox(
+                    "Selecione o orçamento",
+                    [o["id"] for o in orcs],
+                    format_func=lambda i: next(
+                        (f"#{o['id']} · {o.get('fornecedor') or 's/ fornecedor'} · {format_currency(o.get('valor'))}"
+                         for o in orcs if o["id"] == i), str(i)),
+                    key=f"edit_orc_sel_{selected_req_id}",
+                )
+                _o = next((o for o in orcs if o["id"] == _edit_id), None)
+                if _o:
+                    with st.form(f"form_edit_orc_{selected_req_id}_{_edit_id}"):
+                        ec1, ec2 = st.columns(2)
+                        e_forn = ec1.text_input("Fornecedor", value=_o.get("fornecedor") or "")
+                        e_valor = ec1.text_input(
+                            "Valor",
+                            value="" if _o.get("valor") in (None, "") else str(_o.get("valor")),
+                        )
+                        try:
+                            _prazo_val = date.fromisoformat(str(_o.get("prazo_entrega"))) if _o.get("prazo_entrega") else None
+                        except (TypeError, ValueError):
+                            _prazo_val = None
+                        e_prazo = ec2.date_input("Prazo Entrega", value=_prazo_val)
+                        e_cond = ec2.text_input("Condições de Pagamento", value=_o.get("condicoes_pagamento") or "")
+                        _st_opts = ["RECEBIDO", "APROVADO", "APROVADO PARCIAL", "REJEITADO"]
+                        _cur = (_o.get("status_orcamento") or "RECEBIDO").upper()
+                        e_status = st.selectbox(
+                            "Status orçamento", _st_opts,
+                            index=_st_opts.index(_cur) if _cur in _st_opts else 0,
+                        )
+                        e_obs = st.text_area("Observação orçamento", value=_o.get("observacao") or "")
+                        if st.form_submit_button("💾 Salvar alterações", use_container_width=True, type="primary"):
+                            if run_safe(
+                                crud.update_orcamento, int(_edit_id),
+                                {
+                                    "fornecedor": excel_io.normalize_text(e_forn),
+                                    "valor": excel_io.parse_decimal(e_valor),
+                                    "prazo_entrega": e_prazo.isoformat() if e_prazo else None,
+                                    "condicoes_pagamento": e_cond.strip(),
+                                    "status_orcamento": e_status,
+                                    "observacao": e_obs.strip(),
+                                },
+                                sucesso="Orçamento atualizado.",
+                            ):
+                                registrar_log("EDITOU_ORCAMENTO", "orcamento", int(_edit_id), f"REQ {selected_req_id}")
+                                st.rerun()
 
         if orcs and PODE_EXCLUIR:
             with st.expander("🗑️ Excluir Orçamento"):
@@ -768,7 +816,7 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
                     crud.update_orcamento(int(orc_escolhido), {"status_orcamento": status_map[acao]})
                 if acao in ("APROVADO", "APROVADO PARCIAL") and req_data:
                     updated = dict(req_data)
-                    updated["situacao"] = "Comprado"
+                    updated["situacao"] = "Aprovação"
                     crud.update_requisicao(selected_req_id, updated)
                 registrar_log(acao, "orcamento", int(orc_escolhido), f"REQ {selected_req_id}")
                 st.toast("Aprovação registrada.", icon="✅")
@@ -939,6 +987,16 @@ def open_requisicao_dialog(selected_req_id: int, want_tab: str = "dados") -> Non
                 st.session_state[f"_pdf_{selected_req_id}"] = pedido.gerar_pedido_pdf(empresa_emissora, dados_ped)
                 st.session_state[f"_pdf_nome_{selected_req_id}"] = f"Pedido_{ped_numero}.pdf"
                 registrar_log("GEROU_PEDIDO", "requisicao", selected_req_id, f"{empresa_emissora} · {ped_numero}")
+                # Só agora (pedido emitido) a requisição vira "Comprado".
+                if req_data and req_data.get("situacao") not in ("Comprado", "Concluído", "Cancelado"):
+                    _upd = dict(req_data)
+                    _upd["situacao"] = "Comprado"
+                    if not (_upd.get("data_compra") or ""):
+                        _upd["data_compra"] = date.today().isoformat()
+                    if not (_upd.get("fornecedor") or "").strip() and _orc_aprov:
+                        _upd["fornecedor"] = _orc_aprov.get("fornecedor") or _upd.get("fornecedor")
+                    crud.update_requisicao(selected_req_id, _upd)
+                    registrar_log("MARCOU_COMPRADO", "requisicao", selected_req_id)
             except Exception as exc:  # noqa: BLE001
                 logger.exception("Erro ao gerar PDF do pedido (req=%s)", selected_req_id)
                 st.error(f"Erro ao gerar o PDF: {exc}")
