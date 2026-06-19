@@ -1,7 +1,9 @@
-"""Importação de 'Carta de Cotação' (PDF) → requisição.
+"""Importação de documentos da plataforma de compras (PDF) → requisição.
 
-Lê o PDF gerado pela plataforma oficial de compras e extrai os dados
-necessários para criar uma requisição com seus itens.
+Reconhece dois tipos de documento e extrai os dados para criar uma requisição
+com seus itens:
+  - 'Carta de Cotação'  → requisição em 'Solicitado' (sem preços)
+  - 'Pedido de Compra'  → requisição em 'Comprado' (com fornecedor e valores)
 """
 
 from __future__ import annotations
@@ -12,18 +14,32 @@ from typing import Any
 
 
 def _parse_qtde(texto: str) -> tuple[float | None, str]:
-    """'1.200,00 PC' -> (1200.0, 'PC'). Retorna (quantidade, unidade)."""
+    """'8,00 UN' -> (8.0, 'UN'). Retorna (quantidade, unidade)."""
     if not texto:
         return None, ""
-    m = re.match(r"\s*([\d.,]+)\s*([A-Za-zºª]+)?", texto.strip())
+    m = re.match(r"\s*([\d.,]+)\s*([A-Za-zºª/]+)?", texto.strip())
     if not m:
         return None, ""
-    num_raw, unidade = m.group(1), (m.group(2) or "").strip()
-    num = num_raw.replace(".", "").replace(",", ".")
+    num = m.group(1).replace(".", "").replace(",", ".")
+    unidade = (m.group(2) or "").strip().upper()
     try:
-        return float(num), unidade.upper()
+        return float(num), unidade
     except ValueError:
-        return None, unidade.upper()
+        return None, unidade
+
+
+def _parse_money(texto: object) -> float | None:
+    """'1.992,00' -> 1992.0 ; '249,000' -> 249.0."""
+    if texto in (None, ""):
+        return None
+    s = str(texto).strip()
+    if not s:
+        return None
+    s = s.replace(".", "").replace(",", ".")
+    try:
+        return float(s)
+    except ValueError:
+        return None
 
 
 def _br_to_iso(data_br: str | None) -> str | None:
@@ -38,7 +54,7 @@ def _br_to_iso(data_br: str | None) -> str | None:
 
 
 def _extrair_itens(page) -> list[dict[str, Any]]:
-    """Extrai os itens da tabela 'Relação de Produtos'."""
+    """Extrai os itens da tabela de produtos (Cotação ou Pedido)."""
     itens: list[dict[str, Any]] = []
     try:
         tabelas = page.find_tables()
@@ -49,24 +65,36 @@ def _extrair_itens(page) -> list[dict[str, Any]]:
         linhas = tab.extract()
         if not linhas:
             continue
-        cabecalho = [str(c or "").strip().lower() for c in linhas[0]]
-        if "descrição" not in cabecalho and "descricao" not in cabecalho:
+        cab = [str(c or "").strip().lower() for c in linhas[0]]
+        if not any("descri" in c for c in cab):
             continue
-        # Índices das colunas pelo cabeçalho
-        def _idx(nome: str, default: int) -> int:
-            for i, c in enumerate(cabecalho):
-                if nome in c:
+
+        def _idx(*nomes: str) -> int:
+            for i, c in enumerate(cab):
+                if any(n in c for n in nomes):
                     return i
-            return default
-        i_item, i_cod, i_desc, i_qtd = (
-            _idx("item", 0), _idx("código", 1), _idx("descri", 2), _idx("quant", 3)
-        )
+            return -1
+
+        i_item = _idx("item")
+        i_cod = _idx("código", "codigo")
+        i_desc = _idx("descri")
+        i_qtd = _idx("quant")
+        i_vu = _idx("valor unit", "vlr unit", "unit")
+        i_vt = _idx("valor total", "vlr total")
+
+        def cell(row, i):
+            return str(row[i] or "").strip() if 0 <= i < len(row) else ""
 
         for row in linhas[1:]:
-            cell = lambda i: str(row[i] or "").strip() if i < len(row) else ""
-            item_n, cod, desc, qtd = cell(i_item), cell(i_cod), cell(i_desc), cell(i_qtd)
-            if not any((item_n, cod, desc, qtd)):
-                continue  # linha vazia
+            item_n = cell(row, i_item)
+            cod = cell(row, i_cod)
+            desc = cell(row, i_desc)
+            qtd = cell(row, i_qtd)
+            # Ignora linhas de totais (Subtotal/Total/Desconto) e linhas vazias
+            if not item_n and not desc and not cod:
+                continue
+            if re.match(r"(sub)?total|desconto|ipi|icms", desc, re.IGNORECASE):
+                continue
             if item_n:  # novo item
                 quantidade, unidade = _parse_qtde(qtd)
                 itens.append({
@@ -74,23 +102,42 @@ def _extrair_itens(page) -> list[dict[str, Any]]:
                     "descricao": desc,
                     "quantidade": quantidade,
                     "unidade": unidade,
-                    "valor_unitario": None,
+                    "valor_unitario": _parse_money(cell(row, i_vu)) if i_vu >= 0 else None,
+                    "valor_total": _parse_money(cell(row, i_vt)) if i_vt >= 0 else None,
                     "observacao": "",
                 })
-            elif itens:  # linha de continuação do item anterior
+            elif itens:  # continuação do item anterior
                 if cod:
                     itens[-1]["codigo"] = f"{itens[-1]['codigo']}{cod}".strip()
                 if desc:
                     itens[-1]["descricao"] = f"{itens[-1]['descricao']} {desc}".strip()
-        break  # usa apenas a primeira tabela de produtos
+        break
     return itens
 
 
-def parse_carta_cotacao(file_bytes: bytes) -> dict[str, Any]:
-    """Lê os bytes de um PDF de Carta de Cotação e devolve os dados da requisição.
+def _empresa_curta(texto: str) -> tuple[str, str]:
+    """Primeira linha não vazia (razão social) + nome curto."""
+    empresa = ""
+    for linha in texto.splitlines():
+        if linha.strip():
+            empresa = linha.strip()
+            break
+    curta = empresa.split()[0].upper() if empresa else ""
+    return curta, empresa
 
-    Retorna dict com: requisicao, empresa, data_solicitacao (ISO), entrega,
-    projeto, item (resumo), itens[], e 'erros' (lista de avisos).
+
+def _resumo_item(itens: list[dict], numero: str | None, rotulo: str) -> str:
+    if itens:
+        primeiro = itens[0]["descricao"] or itens[0]["codigo"]
+        return primeiro if len(itens) == 1 else f"{primeiro} (+{len(itens) - 1} itens)"
+    return f"{rotulo} {numero}" if numero else rotulo
+
+
+def parse_documento(file_bytes: bytes) -> dict[str, Any]:
+    """Detecta o tipo de PDF e devolve os dados da requisição.
+
+    Sempre retorna dict com chave 'tipo' ('cotacao' | 'pedido') e os campos
+    correspondentes, além de 'itens' e 'erros'.
     """
     try:
         import fitz  # PyMuPDF
@@ -99,52 +146,102 @@ def parse_carta_cotacao(file_bytes: bytes) -> dict[str, Any]:
             "PyMuPDF (fitz) não está instalado. Adicione 'PyMuPDF' ao requirements.txt."
         ) from exc
 
-    erros: list[str] = []
     doc = fitz.open(stream=io.BytesIO(file_bytes), filetype="pdf")
     page = doc[0]
     texto = page.get_text("text")
 
-    def _busca(padrao: str) -> str | None:
-        m = re.search(padrao, texto, re.IGNORECASE)
-        return m.group(1).strip() if m else None
+    if re.search(r"Pedido de Compra\s*N", texto, re.IGNORECASE):
+        return _parse_pedido(page, texto)
+    return _parse_cotacao(page, texto)
 
-    numero = _busca(r"Carta de Cota[çc][ãa]o\s*N[ºo°]\s*([0-9]+)")
-    data_inc = _busca(r"inclu[íi]do em:\s*(\d{2}/\d{2}/\d{4})")
-    entrega = _busca(r"Sugest[ãa]o de Entrega:\s*([^\n]+)")
-    projeto = _busca(r"Projeto:\s*([^\n]+)")
 
-    # Empresa: primeira linha não vazia do cabeçalho
-    empresa = ""
-    for linha in texto.splitlines():
-        if linha.strip():
-            empresa = linha.strip()
-            break
-    # Encurta para o primeiro nome (ex.: 'ENGEMETAL COMERCIO...' -> 'ENGEMETAL')
-    empresa_curta = empresa.split()[0].upper() if empresa else ""
+def _busca(texto: str, padrao: str) -> str | None:
+    m = re.search(padrao, texto, re.IGNORECASE)
+    return m.group(1).strip() if m else None
+
+
+def _parse_cotacao(page, texto: str) -> dict[str, Any]:
+    erros: list[str] = []
+    numero = _busca(texto, r"Carta de Cota[çc][ãa]o\s*N[ºo°]\s*([0-9]+)")
+    data_inc = _busca(texto, r"inclu[íi]do em:\s*(\d{2}/\d{2}/\d{4})")
+    entrega = _busca(texto, r"Sugest[ãa]o de Entrega:\s*([^\n]+)")
+    curta, completa = _empresa_curta(texto)
 
     itens = _extrair_itens(page)
     if not itens:
         erros.append("Nenhum item encontrado na 'Relação de Produtos'.")
-
     data_iso = _br_to_iso(data_inc)
     if data_inc and not data_iso:
         erros.append(f"Data de inclusão não reconhecida: {data_inc}")
 
-    # Resumo do item para a coluna 'Item' da lista
-    if itens:
-        primeiro = itens[0]["descricao"] or itens[0]["codigo"]
-        resumo = primeiro if len(itens) == 1 else f"{primeiro} (+{len(itens) - 1} itens)"
-    else:
-        resumo = f"Carta de Cotação {numero}" if numero else "Carta de Cotação"
-
     return {
+        "tipo": "cotacao",
         "requisicao": numero,
-        "empresa": empresa_curta,
-        "empresa_completa": empresa,
+        "empresa": curta,
+        "empresa_completa": completa,
+        "fornecedor": "",
         "data_solicitacao": data_iso,
+        "data_compra": None,
         "entrega": (entrega or "").strip(),
-        "projeto": (projeto or "").strip(),
-        "item": resumo,
+        "situacao": "Solicitado",
+        "valor": None,
+        "valor_desconto": None,
+        "observacao": "",
+        "item": _resumo_item(itens, numero, "Carta de Cotação"),
         "itens": itens,
         "erros": erros,
     }
+
+
+def _parse_pedido(page, texto: str) -> dict[str, Any]:
+    erros: list[str] = []
+    numero = _busca(texto, r"Pedido de Compra\s*N[ºo°]\s*([0-9]+)")
+    data_inc = _busca(texto, r"inclu[íi]do em:\s*(\d{2}/\d{2}/\d{4})")
+    entrega = _busca(texto, r"Previs[ãa]o de Entrega:\s*([^\n]+)")
+    fornecedor = _busca(texto, r"Informa[çc][õo]es do Fornecedor\s*\n([^\n]+)")
+    contato = _busca(texto, r"Contato:\s*([^\n]+)")
+    parcelas = _busca(texto, r"Parcelas\s*\n([^\n]+)")
+    total = _parse_money(_busca(texto, r"\nTotal:\s*\(R\$\)\s*\n([\d.,]+)"))
+    desconto = _parse_money(_busca(texto, r"Desconto:\s*\(R\$\)\s*\n([\d.,]+)"))
+    curta, completa = _empresa_curta(texto)
+
+    itens = _extrair_itens(page)
+    if not itens:
+        erros.append("Nenhum item encontrado em 'Itens do Pedido'.")
+    data_iso = _br_to_iso(data_inc)
+    if data_inc and not data_iso:
+        erros.append(f"Data de inclusão não reconhecida: {data_inc}")
+
+    # Total: usa o do PDF; se faltar, soma os totais dos itens.
+    if total is None:
+        soma = sum(it["valor_total"] for it in itens if it.get("valor_total"))
+        total = soma or None
+
+    obs_partes = []
+    if parcelas:
+        obs_partes.append(f"Pgto: {parcelas}")
+    if contato:
+        obs_partes.append(f"Contato: {contato}")
+
+    return {
+        "tipo": "pedido",
+        "requisicao": numero,
+        "empresa": curta,
+        "empresa_completa": completa,
+        "fornecedor": (fornecedor or "").strip(),
+        "data_solicitacao": data_iso,
+        "data_compra": data_iso,
+        "entrega": (entrega or "").strip(),
+        "situacao": "Comprado",
+        "valor": total,
+        "valor_desconto": desconto,
+        "observacao": " · ".join(obs_partes),
+        "item": _resumo_item(itens, numero, "Pedido de Compra"),
+        "itens": itens,
+        "erros": erros,
+    }
+
+
+# Compatibilidade: nome antigo usado anteriormente.
+def parse_carta_cotacao(file_bytes: bytes) -> dict[str, Any]:
+    return parse_documento(file_bytes)

@@ -1343,8 +1343,9 @@ if "requisicoes" in TABS:
                 st.toast("Requisição criada com sucesso.", icon="✅")
                 st.rerun()
 
-      with st.expander("📄 Importar Carta de Cotação (PDF)", expanded=False):
-        st.caption("Envie um ou mais PDFs de Carta de Cotação. Cada PDF vira uma requisição com seus itens.")
+      with st.expander("📄 Importar PDF (Cotação ou Pedido de Compra)", expanded=False):
+        st.caption("Envie um ou mais PDFs. Cartas de Cotação viram requisições 'Solicitado'; "
+                   "Pedidos de Compra viram 'Comprado' (com fornecedor e valores). Cada PDF vira uma requisição.")
         _pdfs = st.file_uploader(
             "Arquivos PDF", type=["pdf"], accept_multiple_files=True, key="cotacao_pdf_uploader",
         )
@@ -1352,7 +1353,7 @@ if "requisicoes" in TABS:
             _parsed: list[dict] = []
             for _f in _pdfs:
                 try:
-                    _d = cotacao_pdf.parse_carta_cotacao(_f.getvalue())
+                    _d = cotacao_pdf.parse_documento(_f.getvalue())
                     _d["_arquivo"] = _f.name
                     _parsed.append(_d)
                 except Exception as exc:  # noqa: BLE001
@@ -1360,16 +1361,25 @@ if "requisicoes" in TABS:
                     st.error(f"❌ {_f.name}: não consegui ler ({exc}).")
 
             for _d in _parsed:
-                _titulo = f"📄 {_d['_arquivo']} → Carta {_d.get('requisicao') or '?'}"
-                st.markdown(f"**{_titulo}**")
+                _tipo_lbl = "🧾 Pedido de Compra" if _d.get("tipo") == "pedido" else "📋 Carta de Cotação"
+                st.markdown(f"**{_tipo_lbl} Nº {_d.get('requisicao') or '?'}** · _{_d['_arquivo']}_ "
+                            f"→ situação **{_d.get('situacao')}**")
                 _c1, _c2, _c3, _c4 = st.columns(4)
                 _c1.caption(f"Empresa: **{_d.get('empresa') or '—'}**")
                 _c2.caption(f"Dt. Solicitação: **{fmt_date(_d.get('data_solicitacao'))}**")
-                _c3.caption(f"Sug. Entrega: **{_d.get('entrega') or '—'}**")
+                _c3.caption(f"Sug./Prev. Entrega: **{_d.get('entrega') or '—'}**")
                 _c4.caption(f"Itens: **{len(_d.get('itens') or [])}**")
+                if _d.get("tipo") == "pedido":
+                    _p1, _p2, _p3 = st.columns(3)
+                    _p1.caption(f"Fornecedor: **{_d.get('fornecedor') or '—'}**")
+                    _p2.caption(f"Valor: **{format_currency(_d.get('valor'))}**")
+                    _p3.caption(f"Obs.: {_d.get('observacao') or '—'}")
                 if _d.get("itens"):
+                    _cols_prev = ["codigo", "descricao", "quantidade", "unidade"]
+                    if _d.get("tipo") == "pedido":
+                        _cols_prev += ["valor_unitario", "valor_total"]
                     st.dataframe(
-                        pd.DataFrame(_d["itens"])[["codigo", "descricao", "quantidade", "unidade"]],
+                        pd.DataFrame(_d["itens"])[_cols_prev],
                         use_container_width=True, hide_index=True,
                     )
                 for _e in _d.get("erros") or []:
@@ -1383,10 +1393,14 @@ if "requisicoes" in TABS:
                         "requisicao": _d.get("requisicao"),
                         "empresa": (_d.get("empresa") or "").upper(),
                         "item": _d.get("item"),
+                        "fornecedor": _d.get("fornecedor") or None,
                         "data_solicitacao": _d.get("data_solicitacao"),
+                        "data_compra": _d.get("data_compra"),
                         "entrega": _d.get("entrega"),
-                        "situacao": "Solicitado",
-                        "valor": None,
+                        "situacao": _d.get("situacao") or "Solicitado",
+                        "valor": _d.get("valor"),
+                        "valor_desconto": _d.get("valor_desconto"),
+                        "observacao": _d.get("observacao") or None,
                     }
                     _errs = validate_payload(_payload)
                     if _errs:
@@ -1409,8 +1423,8 @@ if "requisicoes" in TABS:
 
                     if run_safe(_criar):
                         _ok += 1
-                        registrar_log("IMPORTOU_COTACAO", "requisicao",
-                                      detalhe=f"Carta {_d.get('requisicao')} · {len(_d.get('itens') or [])} itens")
+                        registrar_log("IMPORTOU_PDF", "requisicao",
+                                      detalhe=f"{_d.get('tipo')} {_d.get('requisicao')} · {len(_d.get('itens') or [])} itens")
                     else:
                         _falhas += 1
                 if _ok:
