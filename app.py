@@ -1757,39 +1757,47 @@ if "requisicoes" in TABS:
                 _orig_row = df_grid.loc[df_grid["id"] == _rid]
                 if _orig_row.empty:
                     continue
+                def _txt(v):
+                    """Normaliza célula em texto, tratando NaN/None como vazio."""
+                    return "" if v is None or (isinstance(v, float) and pd.isna(v)) else str(v).strip()
+
                 _updates: dict = {}
                 for _col in _editaveis:
                     _new = ret_row.get(_col)
                     _old = _orig_row.iloc[0].get(_col)
                     if _col == "valor":
-                        _nf = None if _new in (None, "") else float(_new)
-                        _of = None if _old in (None, "") else float(_old)
+                        _ns, _os = _txt(_new), _txt(_old)
+                        _nf = None if _ns == "" else float(_ns)
+                        _of = None if _os == "" else float(_os)
                         if _nf != _of:
                             _updates["valor"] = _nf
                     elif _col == "situacao":
-                        if _new and str(_old) != str(_new):
-                            _updates["situacao"] = str(_new)
+                        _nv = _txt(_new)
+                        if _nv and _nv != _txt(_old):
+                            _updates["situacao"] = _nv
                     elif _col in ("empresa", "item"):
                         # Campos obrigatórios: não permite salvar vazio
-                        _nv = str(_new or "").strip()
-                        if _nv and _nv != str(_old or "").strip():
+                        _nv = _txt(_new)
+                        if _nv and _nv != _txt(_old):
                             _updates[_col] = _nv.upper() if _col == "empresa" else _nv
                     elif _col == "data_solicitacao":
                         # Obrigatória: só atualiza se vier valor e for diferente
-                        _nv = str(_new or "").strip()[:10]
-                        if _nv and _nv != str(_old or "").strip()[:10]:
+                        _nv = _txt(_new)[:10]
+                        if _nv and _nv != _txt(_old)[:10]:
                             _updates["data_solicitacao"] = _nv
                     elif _col == "data_compra":
                         # Opcional: aceita limpar (vira nulo)
-                        _nv = str(_new or "").strip()[:10]
-                        if _nv != str(_old or "").strip()[:10]:
+                        _nv = _txt(_new)[:10]
+                        if _nv != _txt(_old)[:10]:
                             _updates["data_compra"] = _nv or None
                     elif _col == "requisicao":
-                        if (str(_new or "").strip()) != (str(_old or "").strip()):
-                            _updates["requisicao"] = str(_new or "").strip()
+                        _nv = _txt(_new)
+                        if _nv != _txt(_old):
+                            _updates["requisicao"] = _nv
                     else:  # fornecedor
-                        if (str(_new or "").strip()) != (str(_old or "").strip()):
-                            _updates["fornecedor"] = str(_new or "").strip()
+                        _nv = _txt(_new)
+                        if _nv != _txt(_old):
+                            _updates["fornecedor"] = _nv
                 if _updates:
                     crud.update_requisicao(int(_rid), _updates)
                     registrar_log("EDITOU_INLINE", "requisicao", int(_rid), ", ".join(_updates.keys()))
