@@ -1349,16 +1349,24 @@ if "requisicoes" in TABS:
         _pdfs = st.file_uploader(
             "Arquivos PDF", type=["pdf"], accept_multiple_files=True, key="cotacao_pdf_uploader",
         )
+        _ja_importados = st.session_state.setdefault("_pdfs_importados", set())
         if _pdfs:
             _parsed: list[dict] = []
             for _f in _pdfs:
+                if (_f.name, _f.size) in _ja_importados:
+                    continue  # já importado nesta sessão — ignora (evita duplicar)
                 try:
                     _d = cotacao_pdf.parse_documento(_f.getvalue())
                     _d["_arquivo"] = _f.name
+                    _d["_chave"] = (_f.name, _f.size)
                     _parsed.append(_d)
                 except Exception as exc:  # noqa: BLE001
                     logger.exception("Erro ao ler PDF de cotação: %s", _f.name)
                     st.error(f"❌ {_f.name}: não consegui ler ({exc}).")
+
+            if not _parsed:
+                st.info("Todos os PDFs enviados já foram importados. "
+                        "Adicione novos arquivos para importar mais.")
 
             for _d in _parsed:
                 _tipo_lbl = "🧾 Pedido de Compra" if _d.get("tipo") == "pedido" else "📋 Carta de Cotação"
@@ -1423,14 +1431,18 @@ if "requisicoes" in TABS:
 
                     if run_safe(_criar):
                         _ok += 1
+                        _ja_importados.add(_d["_chave"])  # marca como importado (some do preview)
                         registrar_log("IMPORTOU_PDF", "requisicao",
                                       detalhe=f"{_d.get('tipo')} {_d.get('requisicao')} · {len(_d.get('itens') or [])} itens")
                     else:
                         _falhas += 1
                 if _ok:
-                    st.success(f"{_ok} requisição(ões) importada(s)."
-                               + (f" {_falhas} com erro." if _falhas else ""))
-                    st.rerun()
+                    # Sem st.rerun(): mantém a aba atual e a lista abaixo já reflete os novos
+                    # registros (a criação ocorre antes da grade). Os arquivos importados
+                    # saem do preview por estarem marcados em _pdfs_importados.
+                    st.success(f"✅ {_ok} requisição(ões) importada(s)."
+                               + (f" {_falhas} com erro." if _falhas else "")
+                               + " Pode adicionar novos PDFs para importar mais.")
 
     req_filters = dict(filters)
     total_registros = crud.count_requisicoes(req_filters)
