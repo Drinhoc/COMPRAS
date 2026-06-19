@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import logging
+import re
 import os
 from datetime import date, timedelta
 
@@ -1670,13 +1671,13 @@ if "requisicoes" in TABS:
                                 width=130, suppressSizeToFit=True,
                                 valueFormatter=date_formatter,
                                 editable=PODE_EDITAR,
-                                cellEditor="agDateStringCellEditor")
+                                cellDataType=False)
         if "data_compra" in df_grid.columns:
             gb.configure_column("data_compra",      headerName="Dt. Compra",
                                 width=120, suppressSizeToFit=True,
                                 valueFormatter=date_formatter,
                                 editable=PODE_EDITAR,
-                                cellEditor="agDateStringCellEditor")
+                                cellDataType=False)
         if "empresa" in df_grid.columns:
             gb.configure_column("empresa",          headerName="Empresa",   width=150,
                                 editable=PODE_EDITAR)
@@ -1755,6 +1756,19 @@ if "requisicoes" in TABS:
                     """Normaliza célula em texto, tratando NaN/None como vazio."""
                     return "" if v is None or (isinstance(v, float) and pd.isna(v)) else str(v).strip()
 
+                def _to_iso(s):
+                    """Aceita 'dd/mm/aaaa' ou 'aaaa-mm-dd' e devolve ISO; None se inválida/vazia."""
+                    s = (s or "").strip()
+                    if not s:
+                        return None
+                    m = re.match(r"(\d{2})/(\d{2})/(\d{4})", s)
+                    if m:
+                        return f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
+                    m = re.match(r"(\d{4})-(\d{2})-(\d{2})", s)
+                    if m:
+                        return s[:10]
+                    return None
+
                 _updates: dict = {}
                 for _col in _editaveis:
                     _new = ret_row.get(_col)
@@ -1775,15 +1789,18 @@ if "requisicoes" in TABS:
                         if _nv and _nv != _txt(_old):
                             _updates[_col] = _nv.upper() if _col == "empresa" else _nv
                     elif _col == "data_solicitacao":
-                        # Obrigatória: só atualiza se vier valor e for diferente
-                        _nv = _txt(_new)[:10]
+                        # Obrigatória: só atualiza se a data for válida e diferente
+                        _nv = _to_iso(_txt(_new))
                         if _nv and _nv != _txt(_old)[:10]:
                             _updates["data_solicitacao"] = _nv
                     elif _col == "data_compra":
                         # Opcional: aceita limpar (vira nulo)
-                        _nv = _txt(_new)[:10]
-                        if _nv != _txt(_old)[:10]:
-                            _updates["data_compra"] = _nv or None
+                        _raw = _txt(_new)
+                        _nv = _to_iso(_raw)
+                        if not _raw and _txt(_old):  # limpou o campo
+                            _updates["data_compra"] = None
+                        elif _nv and _nv != _txt(_old)[:10]:
+                            _updates["data_compra"] = _nv
                     elif _col == "requisicao":
                         _nv = _txt(_new)
                         if _nv != _txt(_old):
