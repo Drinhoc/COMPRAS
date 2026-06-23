@@ -11,11 +11,11 @@ from . import crud
 PERMISSOES: dict[str, dict[str, bool]] = {
     "ADM": {
         "editar": True, "excluir": True, "aprovar": True,
-        "admin": True, "logs": True, "ver_financeiro": True, "importar": True,
+        "admin": True, "logs": False, "ver_financeiro": True, "importar": True,
     },
     "GESTOR": {
         "editar": True, "excluir": False, "aprovar": True,
-        "admin": False, "logs": True, "ver_financeiro": True, "importar": False,
+        "admin": False, "logs": False, "ver_financeiro": True, "importar": False,
     },
     # Início mais permissivo (quase como Gestor), porém pode editar e não vê logs.
     # Aperte as flags abaixo conforme for refinando.
