@@ -389,3 +389,78 @@ $dados = json_decode(curl_exec($ch), true);   // mesmo JSON do parse_documento()
 > Em todos os casos, o restante deste documento (regras, modelo, contratos) serve como
 > especificação para a reimplementação em PHP.
 
+---
+
+## Apêndice B — Integração com o ERP **Omie** (API)
+
+A empresa já usa o **Omie**. A API dele permite **puxar e enviar** dados de compras, o que pode
+**eliminar a importação manual de PDF** (lendo o dado estruturado direto da fonte, sem parsing).
+
+### B.1 Como a API funciona
+- **Protocolo:** JSON (estilo JSON-RPC). Cada chamada é um `POST` com `app_key`, `app_secret`,
+  `call` (nome do método) e `param` (payload). Sem REST por enquanto (em desenvolvimento).
+- **Autenticação:** `app_key` + `app_secret`, gerados por um usuário **administrador** da conta.
+- **Custo:** **incluída no plano Omie** — sem cobrança por chamada nos materiais oficiais. O custo
+  é o **esforço de desenvolvimento**.
+- **Limites de uso (generosos):** 960 req/min por IP · 240 req/min por IP+AppKey+Método ·
+  4 simultâneas · 4/s ≈ 14.400/h ≈ **345.600/dia** · paginação **100 registros/página** ·
+  bloqueio de 30 min (HTTP 425) após 10 erros seguidos · consulta repetida do mesmo ID em 60s é
+  ignorada.
+
+### B.2 Grupos de serviço relevantes
+- **Geral:** clientes, **fornecedores**, projetos, categorias, departamentos.
+- **Compras, Estoque e Produção:** **Requisições de Compra**, **Pedidos de Compra**, **Produtos**,
+  notas de recebimento.
+- **Finanças:** **Contas a Pagar** (títulos, parcelas, vencimentos), contas a receber, extratos.
+- **Vendas e NF-e:** pedidos/orçamentos de venda, **documentos fiscais (NF-e)**.
+- **Serviços e NFS-e**, **CRM**, **Painel do Contador**.
+
+### B.3 O que dá para integrar com a nossa estrutura
+
+| Recurso Omie | Método (exemplos) | Ganho no controle de compras |
+|---|---|---|
+| Pedidos de Compra | `ListarPedidosCompra` / `ConsultarPedCompra` | Puxar pedidos direto → dispensa importar PDF |
+| Requisições de Compra | endpoints de requisição | Idem para requisições/cotações |
+| Fornecedores | `ListarFornecedores` | Padroniza o campo fornecedor (sem digitação) |
+| Produtos | `ListarProdutos` | Catálogo de códigos para os itens |
+| Contas a Pagar | `ListarContasPagar` | Status financeiro real (parcelas, pago/aberto) |
+| NF-e | consulta de documentos | Vincular nota fiscal à requisição (campo `nf`) |
+| **Criar** Pedido de Compra | **`IncluirPedCompra`** (`/api/v1/produtos/pedidocompra/`) | Nosso fluxo de aprovação **gera o pedido no Omie** |
+| **Webhooks** | assinatura de eventos | Omie **avisa** sobre pedido novo → requisição em tempo real |
+
+Campos principais do `IncluirPedCompra`: cabeçalho (`cCodIntPed`, `dDtPrevisao`, `nCodFor`,
+`cCodCateg`, `cNumPedido`, `cObs`) + produtos (`nCodProd`, `nQtde`, `nValUnit`, descontos).
+
+### B.4 Direções de integração
+- **Omie → nosso controle (entrada automática):** sincronizar/baixar pedidos e requisições
+  (ou receber por **webhook**). Substitui a digitação e o import de PDF.
+- **Nosso controle → Omie (saída):** ao aprovar internamente, chamar `IncluirPedCompra` para
+  registrar o pedido no ERP. A aprovação passa a **alimentar o Omie**.
+
+### B.5 Mapeamento de dados (Omie → nosso modelo)
+| Nosso campo | Origem no Omie |
+|---|---|
+| `requisicao` (cód. original) | `cNumPedido` / nº do pedido/requisição |
+| `empresa` | empresa/filial da conta Omie |
+| `fornecedor` | cadastro de Fornecedores (`nCodFor` → nome) |
+| `data_solicitacao` / `data_compra` | datas do pedido (`dDtPrevisao`, inclusão) |
+| `itens[]` (código/desc/qtde/valor_unit) | `produtos` do pedido (`nCodProd`, `nQtde`, `nValUnit`) |
+| `valor` / `valor_desconto` | totais do pedido |
+| `entrega` | `dDtPrevisao` |
+| `observacao` | `cObs` (+ parcelas/contato) |
+| `nf` | documento fiscal vinculado (NF-e) |
+| status financeiro | Contas a Pagar (parcelas/pago) |
+
+### B.6 Recomendação
+1. **Fase 1 (alto valor, baixo risco):** *pull* de Pedidos/Requisições de Compra + Fornecedores +
+   Produtos → cria/atualiza requisições automaticamente. Substitui o import de PDF.
+2. **Fase 2:** enriquecer com **Contas a Pagar** (status financeiro) e **NF-e**.
+3. **Fase 3:** *push* (`IncluirPedCompra`) e **webhooks** para tempo real.
+4. **Plano B:** manter o parser de PDF (`cotacao_pdf.py`) apenas para documentos que **não**
+   venham do Omie.
+
+> O parsing de PDF deixa de ser o caminho principal e vira contingência — a API entrega o dado
+> estruturado e confiável na origem. Referências: portal do desenvolvedor Omie e central de ajuda
+> (service-list, limites de consumo, criar pedido de compra por API).
+
+
