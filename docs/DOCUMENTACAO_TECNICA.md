@@ -519,9 +519,25 @@ Adicionar à tabela `requisicoes`:
 - **Fase 1 — Entrada Omie (pull):** Fornecedores + Produtos + Pedidos/Requisições → cria
   registros `origem=omie`. Reduz drasticamente a digitação.
 - **Fase 2 — Manual coexistindo:** lançamento do que é fora do Omie (`origem=manual`).
-- **Fase 3 — Enriquecimento:** Contas a Pagar (status financeiro) + NF-e.
-- **Fase 4 — Tempo real e saída:** webhooks + push de pedidos para o Omie.
+- **Fase 3 — Geração do pedido (dois caminhos)** — ver C.6.
+- **Fase 4 — Tempo real:** webhooks Omie (pedido novo → requisição automática).
+- **Futuro distante (baixa prioridade):** Contas a Pagar (status financeiro) + NF-e.
 - **Contingência:** parser de PDF apenas para documentos que não vierem do Omie.
+
+### C.6 Geração do Pedido de Compra — **dois caminhos**
+O passo "gerar pedido" passa a rotear conforme a origem/itens da requisição:
+
+| Tipo de compra | Caminho do pedido |
+|---|---|
+| Materiais cadastrados no Omie (fábrica/produção) | Plataforma → **`IncluirPedCompra`** (API) → **Omie gera o pedido oficial** e segue o fluxo do ERP |
+| Serviços + itens do dia a dia (não existem no Omie) | Plataforma gera o **PDF próprio** (gerador ReportLab já implementado, `pedido.py`) |
+
+**Regra de roteamento:** se `origem=omie` e os itens possuem código de produto do Omio
+(`nCodProd`) → enviar via `IncluirPedCompra`; caso contrário (serviço/item avulso) → gerar PDF
+local. Pode ser automático ou via botão ("Gerar no Omie" vs "Gerar PDF").
+
+> Assim, o ERP continua dono dos pedidos de produção (com NF/financeiro nativos), e a plataforma
+> cobre o que o Omie não atende hoje (serviços e itens não cadastrados) — sem lacuna no controle.
 
 > Resultado: uma **única tela de controle** onde compras de produção (vindas do Omie) e compras do
 > dia a dia (manuais) convivem com o mesmo fluxo de aprovação, anexos e indicadores — e onde a
