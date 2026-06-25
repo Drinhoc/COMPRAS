@@ -463,4 +463,69 @@ Campos principais do `IncluirPedCompra`: cabeçalho (`cCodIntPed`, `dDtPrevisao`
 > estruturado e confiável na origem. Referências: portal do desenvolvedor Omie e central de ajuda
 > (service-list, limites de consumo, criar pedido de compra por API).
 
+---
+
+## Apêndice C — Arquitetura-alvo (visão consolidada)
+
+Cenário final pretendido: **a plataforma PHP oficial** hospeda a **camada de controle de compras**
+(este sistema), que é **alimentada pelo Omie** no que for possível **e** aceita **lançamento manual**
+do que não existe no Omie (requisições de serviço, itens não cadastrados — limpeza, dia a dia,
+compras avulsas). Tudo convive no mesmo modelo, com o mesmo controle.
+
+### C.1 Princípio central — camada de controle unificada
+Independentemente da **origem** (Omie, manual ou PDF), todo registro vira **uma requisição** no
+mesmo modelo. O fluxo de controle (status, aprovação, anexos, dashboards, análises) é idêntico
+para todos.
+
+```
+        ┌──────────────── PLATAFORMA PHP OFICIAL ────────────────┐
+  Omie API ──(pull/webhook)──►  ┌─────────────────────────┐
+  (materiais/produção)          │   CAMADA DE CONTROLE     │
+                                │  requisição única:      │ ──► Dashboards
+  Lançamento manual ──────────► │  • origem: omie|manual  │     Análises
+  (serviços, limpeza, avulsos)  │  • status / aprovação   │     Pedido PDF
+  Import PDF (plano B) ───────► │  • itens / anexos       │
+                                └─────────────────────────┘
+        └────────────────────────────────────────────────────────┘
+```
+
+### C.2 Ajuste no modelo (mínimo)
+Adicionar à tabela `requisicoes`:
+- **`origem`** — `omie` | `manual` | `pdf` (de onde veio o registro).
+- **`id_externo`** — ID do pedido/requisição no Omie (reconciliação; evita duplicar).
+
+### C.3 Três regras para evitar conflito
+1. **Sincronização idempotente:** ao importar do Omie, casar pelo `id_externo` — existe → atualiza;
+   não existe → cria. Nunca duplica.
+2. **Propriedade dos dados:** em registros `origem=omie`, o **Omie é dono dos dados brutos**
+   (fornecedor, itens, valor); o **controle interno** (situação, aprovações, anexos, observações)
+   é **sempre da plataforma** e não é sobrescrito pela sincronização.
+3. **Manual é soberano:** registros `origem=manual` são criados/editados livremente, sem depender
+   do Omie. (Funcionalidade já existente neste sistema, incluindo o modo "serviço/valor fechado".)
+
+### C.4 O que já está pronto vs. a construir
+| Parte | Estado |
+|---|---|
+| Lançamento manual + itens + serviço/valor fechado | ✅ Já implementado |
+| Aprovação (com e **sem** orçamento) | ✅ Já implementado |
+| Anexos, status, dashboards, análises, pedido PDF | ✅ Já implementado |
+| Parser de PDF (plano B) | ✅ Já implementado |
+| Campos `origem` / `id_externo` | ⬜ Adicionar |
+| Conector Omie (pull: fornecedores, produtos, pedidos) | ⬜ Construir |
+| Webhooks Omie + push (`IncluirPedCompra`) | ⬜ Fase posterior |
+
+### C.5 Roadmap de aplicação
+- **Fase 0 — Base:** portar a camada de controle (modelo + regras das seções 4–6) para o PHP.
+- **Fase 1 — Entrada Omie (pull):** Fornecedores + Produtos + Pedidos/Requisições → cria
+  registros `origem=omie`. Reduz drasticamente a digitação.
+- **Fase 2 — Manual coexistindo:** lançamento do que é fora do Omie (`origem=manual`).
+- **Fase 3 — Enriquecimento:** Contas a Pagar (status financeiro) + NF-e.
+- **Fase 4 — Tempo real e saída:** webhooks + push de pedidos para o Omie.
+- **Contingência:** parser de PDF apenas para documentos que não vierem do Omie.
+
+> Resultado: uma **única tela de controle** onde compras de produção (vindas do Omie) e compras do
+> dia a dia (manuais) convivem com o mesmo fluxo de aprovação, anexos e indicadores — e onde a
+> automação cresce por fases, sem nunca travar o que precisa ser lançado à mão.
+
+
 
