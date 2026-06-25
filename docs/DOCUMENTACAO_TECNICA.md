@@ -543,5 +543,32 @@ local. Pode ser automático ou via botão ("Gerar no Omie" vs "Gerar PDF").
 > dia a dia (manuais) convivem com o mesmo fluxo de aprovação, anexos e indicadores — e onde a
 > automação cresce por fases, sem nunca travar o que precisa ser lançado à mão.
 
+### C.7 Cenário "origem no Omie, aprovação na plataforma" (round-trip)
+Caso de uso: um colaborador do **estoque cria a requisição direto no Omie**; ela deve **aparecer
+automaticamente** na lista da plataforma para aprovação, e a aprovação deve **avançar o ciclo no
+ERP**.
+
+Fluxo:
+```
+1. Estoque cria requisição/pedido no OMIE
+2. Omie dispara WEBHOOK  →  endpoint da plataforma
+3. Plataforma consulta detalhes (Consultar...) e cria o registro
+   (origem=omie, id_externo)  →  aparece na lista automaticamente
+4. Aprovação/anexos/controle acontecem NA PLATAFORMA
+5. Ao aprovar  →  plataforma chama a API  →  avança o ciclo no Omie
+   (gera o pedido / atualiza status)
+```
+
+**Mecanismo de entrada:** webhook do Omie (cobre o ciclo de transações, incl. pedido de compra).
+- ⚠️ Confirmar se há evento de webhook específico para **requisição de compra**. Se não houver,
+  usar **polling** (`Listar...` a cada N min) — mesmo efeito prático, sem ser instantâneo.
+
+**Autoridade da aprovação:** definir um dono único para evitar fluxo duplicado. Recomendado: **a
+plataforma é a autoridade** — o Omie é origem do dado e destino do pedido; a decisão de aprovar
+mora na plataforma e é refletida no ERP via API.
+
+**Prevenção de loop:** quando a aprovação gera/atualiza o pedido no Omie, um novo webhook pode
+retornar; reconciliar por `id_externo` e **atualizar** o registro existente (nunca duplicar).
+
 
 
