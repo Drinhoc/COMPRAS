@@ -320,3 +320,72 @@ parametrizado a partir dos filtros da UI).
 
 *Documento gerado a partir do código-fonte atual (branch de desenvolvimento). Para dúvidas sobre
 qualquer função específica, todas estão referenciadas por arquivo na seção correspondente.*
+
+---
+
+## Apêndice A — Integração quando a plataforma é **PHP**
+
+O código Python **não é importável** por PHP. Porém, a maior parte do valor é **portável**, e o
+único trecho realmente difícil de reescrever tem uma saída recomendada (micro-serviço).
+
+### A.1 O que portar direto para PHP (baixo esforço)
+| Parte | Equivalente em PHP |
+|---|---|
+| Modelo de dados (8 tabelas) | É SQL puro — replica no schema da plataforma |
+| Regras de status (seção 5) | Lógica simples — reescreve no backend |
+| Permissões por papel (seção 6.2) | O "mapa central" vira um array/config em PHP |
+| Hash de senha PBKDF2 (seção 6.1) | Nativo: `password_hash()` (bcrypt/argon2) ou `hash_pbkdf2()` |
+| Geração de Pedido em PDF (`pedido.py`) | Libs PHP: **mPDF**, **TCPDF** ou **Dompdf** |
+| Métricas/Análises (`metrics.py`) | SQL agregado + a lib de gráficos da plataforma |
+
+> Atenção ao migrar hashes: se quiser **reaproveitar senhas existentes**, o PHP precisa validar no
+> mesmo esquema PBKDF2-HMAC-SHA256/100k/salt (`hash_pbkdf2('sha256', $senha, $salt, 100000)`).
+> Caso contrário, force a redefinição de senha na primeira entrada.
+
+### A.2 O ponto crítico: **parsing de PDF** (`cotacao_pdf.py`)
+A extração de **tabelas** de PDF do PyMuPDF (`find_tables`) é robusta e foi calibrada em documentos
+reais. As libs PHP (`smalot/pdfparser`) extraem **texto**, mas são fracas com tabelas — replicar a
+lógica (linhas de continuação, código quebrado, colunas) em PHP é trabalhoso e propenso a erro.
+
+**Recomendação: manter o parser como micro-serviço Python.** O PHP envia o PDF e recebe o JSON
+pronto. Aproveita o que **já funciona** sem reinventar a parte mais difícil.
+
+Esboço do serviço (FastAPI/Flask, ~30 linhas) envolvendo a função existente `parse_documento()`:
+
+```python
+# servico_pdf.py  (roda separado; PHP chama via HTTP)
+from fastapi import FastAPI, UploadFile
+from src.cotacao_pdf import parse_documento
+app = FastAPI()
+
+@app.post("/parse")
+async def parse(file: UploadFile):
+    return parse_documento(await file.read())   # devolve o dict (tipo, requisicao, itens, ...)
+```
+
+Chamada a partir do PHP:
+```php
+$ch = curl_init('http://servico-pdf:8000/parse');
+curl_setopt_array($ch, [
+    CURLOPT_POST => true,
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_POSTFIELDS => ['file' => new CURLFile($caminhoPdf)],
+]);
+$dados = json_decode(curl_exec($ch), true);   // mesmo JSON do parse_documento()
+```
+
+**Contrato de saída do `/parse`** (já documentado na seção 7.1):
+`tipo` (cotacao|pedido), `requisicao`, `empresa`, `fornecedor`, `data_solicitacao`, `data_compra`,
+`entrega`, `situacao`, `valor`, `valor_desconto`, `observacao`, `item`, `itens[]`.
+
+### A.3 Estratégia recomendada (resumo)
+1. **Porta para PHP:** modelo de dados, regras de status, permissões, senhas, geração de PDF, métricas.
+2. **Mantém em Python (micro-serviço):** **apenas** o parsing de PDF (`cotacao_pdf.py`) — é o que
+   dá mais trabalho e já está pronto/calibrado.
+3. **Alternativa sem Python algum:** se o TI exigir 100% PHP, o parsing teria que ser reescrito
+   sobre `smalot/pdfparser` + heurísticas de texto (ou `pdftotext` do Poppler via shell). É
+   viável, porém é o item de **maior esforço e risco** — vale só se não puderem manter o serviço.
+
+> Em todos os casos, o restante deste documento (regras, modelo, contratos) serve como
+> especificação para a reimplementação em PHP.
+
